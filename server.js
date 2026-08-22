@@ -8,7 +8,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
-const uploadDirectory = path.join(__dirname, 'uploads');
+const uploadDirectory = process.env.VERCEL ? path.join('/tmp', 'audiobullet-uploads') : path.join(__dirname, 'uploads');
 fs.mkdirSync(uploadDirectory, { recursive: true });
 
 const pool = new Pool({
@@ -68,6 +68,16 @@ async function initializeDatabase() {
     );
   `);
 }
+
+const databaseReady = initializeDatabase();
+app.use('/api', async (_request, _response, next) => {
+  try {
+    await databaseReady;
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
 
 app.get('/api/catalog', async (_request, response) => {
   try {
@@ -194,6 +204,10 @@ app.delete('/api/products/:id', async (request, response) => {
 
 app.get('*', (_request, response) => response.sendFile(path.join(__dirname, 'admin', 'index.html')));
 
-initializeDatabase()
-  .then(() => app.listen(port, () => console.log(`AudioBullet admin running at http://localhost:${port}/admin/`)))
-  .catch(error => { console.error('Database connection failed:', error.message); process.exit(1); });
+if (!process.env.VERCEL) {
+  databaseReady
+    .then(() => app.listen(port, () => console.log(`AudioBullet admin running at http://localhost:${port}/admin/`)))
+    .catch(error => { console.error('Database connection failed:', error.message); process.exit(1); });
+}
+
+module.exports = app;
