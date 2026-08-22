@@ -202,7 +202,10 @@ app.delete('/api/products/:id', async (request, response) => {
   }
 });
 
-app.get('*', (_request, response) => response.sendFile(path.join(__dirname, 'admin', 'index.html')));
+app.get(['/', '/admin', '/admin/', '/index.html', '/home.html'], (request, response) => {
+  const page = request.path.startsWith('/admin') ? path.join(__dirname, 'admin', 'index.html') : path.join(__dirname, 'index.html');
+  response.sendFile(page);
+});
 
 if (!process.env.VERCEL) {
   databaseReady
