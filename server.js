@@ -4,6 +4,7 @@ const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const { Pool } = require('pg');
 const { put } = require('@vercel/blob');
 const adminCredentials = require('./admin-config');
@@ -38,18 +39,47 @@ const upload = multer({
 });
 
 app.use(express.json());
+const sessionCookie = 'audiobullet_admin';
+const sessionLifetime = 8 * 60 * 60 * 1000;
+
+function sessionToken(username, expiresAt) {
+  const payload = `${username}:${expiresAt}`;
+  const signature = crypto.createHmac('sha256', adminCredentials.password).update(payload).digest('hex');
+  return `${Buffer.from(payload).toString('base64url')}.${signature}`;
+}
+
+function isAuthenticated(request) {
+  const cookies = Object.fromEntries((request.headers.cookie || '').split(';').filter(Boolean).map(cookie => {
+    const separator = cookie.indexOf('=');
+    return [cookie.slice(0, separator).trim(), decodeURIComponent(cookie.slice(separator + 1))];
+  }));
+  const [encodedPayload, signature] = (cookies[sessionCookie] || '').split('.');
+  if (!encodedPayload || !signature) return false;
+  const payload = Buffer.from(encodedPayload, 'base64url').toString('utf8');
+  const expectedSignature = crypto.createHmac('sha256', adminCredentials.password).update(payload).digest('hex');
+  if (signature.length !== expectedSignature.length || !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) return false;
+  const [username, expiresAt] = payload.split(':');
+  return username === adminCredentials.username && Number(expiresAt) > Date.now();
+}
+
 function requireAdmin(request, response, next) {
-  const header = request.headers.authorization || '';
-  const [scheme, encodedCredentials] = header.split(' ');
-  if (scheme === 'Basic' && encodedCredentials) {
-    const credentials = Buffer.from(encodedCredentials, 'base64').toString('utf8');
-    const separator = credentials.indexOf(':');
-    if (separator !== -1 && credentials.slice(0, separator) === adminCredentials.username && credentials.slice(separator + 1) === adminCredentials.password) return next();
-  }
-  response.set('WWW-Authenticate', 'Basic realm="AudioBullet Admin"');
+  if (isAuthenticated(request)) return next();
+  if (request.path === '/' || request.path.endsWith('.html')) return response.redirect('/admin/login');
   response.status(401).json({ error: 'Admin authentication required.' });
 }
 
+app.get('/admin/login', (_request, response) => response.sendFile(path.join(__dirname, 'admin', 'login.html')));
+app.post('/admin/login', (request, response) => {
+  const { username, password } = request.body || {};
+  if (username !== adminCredentials.username || password !== adminCredentials.password) return response.status(401).json({ error: 'Invalid username or password.' });
+  const expiresAt = Date.now() + sessionLifetime;
+  response.set('Set-Cookie', `${sessionCookie}=${encodeURIComponent(sessionToken(username, expiresAt))}; HttpOnly; SameSite=Lax; ${process.env.VERCEL ? 'Secure; ' : ''}Path=/; Max-Age=${sessionLifetime / 1000}`);
+  response.json({ ok: true });
+});
+app.post('/admin/logout', requireAdmin, (_request, response) => {
+  response.set('Set-Cookie', `${sessionCookie}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
+  response.sendStatus(204);
+});
 app.use('/admin', requireAdmin);
 app.use('/api', (request, response, next) => request.path === '/catalog' ? next() : requireAdmin(request, response, next));
 app.use('/uploads', express.static(uploadDirectory));
