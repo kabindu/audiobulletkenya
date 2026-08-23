@@ -1,5 +1,5 @@
 ﻿/* ============================================================
-   ICONS â€” abstract line-art per category (original, not brand marks)
+  ICONS - abstract line-art per category (original, not brand marks)
    ============================================================ */
 const ICONS = {
   speakers: `<svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="16" y="4" width="32" height="56" rx="6"/><circle cx="32" cy="20" r="7"/><circle cx="32" cy="20" r="2.5" fill="currentColor"/><circle cx="32" cy="42" r="11"/><circle cx="32" cy="42" r="3.5" fill="currentColor"/></svg>`,
@@ -151,7 +151,7 @@ let BRANDS_BY_CAT = {
 function p(name,category,brand,price,rating,reviews,spec,opts={}){
   return {
     id: name.toLowerCase().replace(/[^a-z0-9]+/g,'-')+'-'+brand.toLowerCase().replace(/[^a-z0-9]+/g,''),
-    name, category, brand, price, rating, reviews, spec,
+    name, category, brand, price, rating, reviews, spec: spec.replace(/\u00c2\u00b7/g, ' - '),
     originalPrice: opts.originalPrice || null,
     badge: opts.badge || null,
     stock: opts.stock || 'in',
@@ -284,7 +284,7 @@ function initStaticUI(){
     const count = PRODUCTS.filter(p=>p.category===c.id).length;
     return `<div class="cat-tile" data-cat="${c.id}">
       <div class="icon-wrap">${productImage(c.id, c.name)}</div>
-      <div><h4>${c.name}</h4><span>${c.desc} Â· ${count} listings</span></div>
+      <div><h4>${c.name}</h4><span>${c.desc} &middot; ${count} listings</span></div>
     </div>`;
   }).join('');
   document.getElementById('catGrid').addEventListener('click', e=>{
@@ -375,8 +375,8 @@ function renderChips(){
   const chips = [];
   if(state.category!=='all') chips.push({label:catName(state.category), clear:()=>setCategory('all')});
   state.brands.forEach(b=> chips.push({label:b, clear:()=>{state.brands.delete(b); renderAll();}}));
-  if(state.priceMin || state.priceMax) chips.push({label:`${fmt(state.priceMin||0)} â€“ ${state.priceMax ? fmt(state.priceMax) : 'No limit'}`, clear:()=>{state.priceMin=null;state.priceMax=null;document.getElementById('priceMin').value='';document.getElementById('priceMax').value='';renderAll();}});
-  if(state.minRating>0) chips.push({label:`${state.minRating}â˜… & up`, clear:()=>{state.minRating=0;renderAll();}});
+  if(state.priceMin || state.priceMax) chips.push({label:`${fmt(state.priceMin||0)} &ndash; ${state.priceMax ? fmt(state.priceMax) : 'No limit'}`, clear:()=>{state.priceMin=null;state.priceMax=null;document.getElementById('priceMin').value='';document.getElementById('priceMax').value='';renderAll();}});
+  if(state.minRating>0) chips.push({label:`${state.minRating}&#9733; & up`, clear:()=>{state.minRating=0;renderAll();}});
   if(state.search) chips.push({label:`"${state.search}"`, clear:()=>{state.search='';document.getElementById('searchInput').value='';renderAll();}});
 
   const wrap = document.getElementById('activeChips');
@@ -429,9 +429,9 @@ function productCard(pr){
         <span class="card-price">${fmt(pr.price)}</span>
         ${pr.originalPrice ? `<span class="card-price-old">${fmt(pr.originalPrice)}</span>` : ''}
       </div>
-      <span class="card-stock">In stock Â· ships in 2â€“4 days</span>
+      <span class="card-stock">In stock &middot; ships in 2&ndash;4 days</span>
       <div class="card-actions">
-        <button class="add-btn ${inCart?'added':''}" data-id="${pr.id}">${inCart? 'Added âœ“' : 'Add to Cart'}</button>
+        <button class="add-btn ${inCart?'added':''}" data-id="${pr.id}">${inCart? 'Added &#10003;' : 'Add to Cart'}</button>
         <button class="quote-btn" title="Request bulk quote">Quote</button>
       </div>
     </div>
@@ -503,7 +503,7 @@ function updateCartUI(){
         <span class="ti">${pr.name}</span>
         <span class="tb">${pr.brand}</span>
         <div class="qty-row">
-          <button class="qty-btn" data-act="dec" data-id="${id}">âˆ’</button>
+          <button class="qty-btn" data-act="dec" data-id="${id}">&minus;</button>
           <span class="qty-num">${qty}</span>
           <button class="qty-btn" data-act="inc" data-id="${id}">+</button>
           <span class="remove-btn" data-act="rm" data-id="${id}" style="margin-left:auto;cursor:pointer;">Remove</span>
