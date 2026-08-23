@@ -38,6 +38,7 @@ const upload = multer({
 
 app.use(express.json());
 app.use('/uploads', express.static(uploadDirectory));
+if (process.env.VERCEL) app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use(express.static(__dirname));
 
 async function initializeDatabase() {
