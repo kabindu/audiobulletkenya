@@ -6,6 +6,7 @@ const path = require('path');
 const fs = require('fs');
 const { Pool } = require('pg');
 const { put } = require('@vercel/blob');
+const adminCredentials = require('./admin-config');
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -37,6 +38,20 @@ const upload = multer({
 });
 
 app.use(express.json());
+function requireAdmin(request, response, next) {
+  const header = request.headers.authorization || '';
+  const [scheme, encodedCredentials] = header.split(' ');
+  if (scheme === 'Basic' && encodedCredentials) {
+    const credentials = Buffer.from(encodedCredentials, 'base64').toString('utf8');
+    const separator = credentials.indexOf(':');
+    if (separator !== -1 && credentials.slice(0, separator) === adminCredentials.username && credentials.slice(separator + 1) === adminCredentials.password) return next();
+  }
+  response.set('WWW-Authenticate', 'Basic realm="AudioBullet Admin"');
+  response.status(401).json({ error: 'Admin authentication required.' });
+}
+
+app.use('/admin', requireAdmin);
+app.use('/api', (request, response, next) => request.path === '/catalog' ? next() : requireAdmin(request, response, next));
 app.use('/uploads', express.static(uploadDirectory));
 if (process.env.VERCEL) app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use(express.static(__dirname));
