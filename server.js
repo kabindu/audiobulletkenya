@@ -8,7 +8,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
-const uploadDirectory = path.join(__dirname, 'uploads');
+const uploadDirectory = process.env.VERCEL ? path.join('/tmp', 'audiobullet-uploads') : path.join(__dirname, 'uploads');
 fs.mkdirSync(uploadDirectory, { recursive: true });
 
 const pool = new Pool(process.env.DATABASE_URL ? {
@@ -211,8 +211,10 @@ app.get(['/', '/admin', '/admin/', '/index.html', '/home.html'], (request, respo
   response.sendFile(page);
 });
 
-databaseReady
-  .then(() => app.listen(port, () => console.log(`AudioBullet server running at http://localhost:${port}/`)))
-  .catch(error => { console.error('Database connection failed:', error.message); process.exit(1); });
+if (require.main === module) {
+  databaseReady
+    .then(() => app.listen(port, () => console.log(`AudioBullet server running at http://localhost:${port}/`)))
+    .catch(error => { console.error('Database connection failed:', error.message); process.exit(1); });
+}
 
 module.exports = app;
