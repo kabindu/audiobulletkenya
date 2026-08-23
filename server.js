@@ -5,6 +5,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { Pool } = require('pg');
+const { put } = require('@vercel/blob');
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -24,7 +25,7 @@ const pool = new Pool(process.env.DATABASE_URL ? {
 });
 
 const upload = multer({
-  storage: multer.diskStorage({
+  storage: process.env.VERCEL ? multer.memoryStorage() : multer.diskStorage({
     destination: uploadDirectory,
     filename: (_request, file, callback) => {
       const extension = path.extname(file.originalname).toLowerCase();
@@ -65,11 +66,12 @@ async function initializeDatabase() {
       badge VARCHAR(50),
       specifications VARCHAR(255),
       description TEXT,
-      image_path VARCHAR(500),
+      image_path TEXT,
       status VARCHAR(10) NOT NULL DEFAULT 'in' CHECK (status IN ('in', 'low', 'out')),
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    ALTER TABLE products ALTER COLUMN image_path TYPE TEXT;
   `);
 }
 
@@ -165,13 +167,27 @@ app.delete('/api/brands/:id', async (request, response) => {
   }
 });
 
+async function imageUrl(file) {
+  if (!file) return null;
+  if (process.env.BLOB_READ_WRITE_TOKEN) {
+    const blob = await put(`products/${Date.now()}-${file.originalname}`, file.buffer || fs.readFileSync(file.path), {
+      access: 'public',
+      addRandomSuffix: true,
+      contentType: file.mimetype,
+    });
+    return blob.url;
+  }
+  return `/uploads/${file.filename}`;
+}
+
 app.post('/api/products', upload.single('image'), async (request, response) => {
   const body = request.body;
-  const values = [body.name, Number(body.categoryId), Number(body.brandId), Number(body.price), body.originalPrice ? Number(body.originalPrice) : null, Number(body.stock || 0), body.badge || null, body.spec || null, body.description || null, request.file ? `/uploads/${request.file.filename}` : null];
+  const values = [body.name, Number(body.categoryId), Number(body.brandId), Number(body.price), body.originalPrice ? Number(body.originalPrice) : null, Number(body.stock || 0), body.badge || null, body.spec || null, body.description || null];
   if (!body.name || !values[1] || !values[2] || Number.isNaN(values[3])) return response.status(400).json({ error: 'Name, category, brand, and price are required.' });
   const status = values[5] === 0 ? 'out' : values[5] <= 5 ? 'low' : 'in';
   try {
-    const result = await pool.query(`INSERT INTO products (name, category_id, brand_id, price, original_price, stock_quantity, badge, specifications, description, image_path, status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`, [...values, status]);
+    const image = await imageUrl(request.file);
+    const result = await pool.query(`INSERT INTO products (name, category_id, brand_id, price, original_price, stock_quantity, badge, specifications, description, image_path, status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`, [...values, image, status]);
     response.status(201).json(result.rows[0]);
   } catch (error) {
     response.status(error.code === '23503' ? 400 : 500).json({ error: error.code === '23503' ? 'Selected category or brand does not exist.' : 'Could not save product.' });
@@ -186,7 +202,8 @@ app.put('/api/products/:id', upload.single('image'), async (request, response) =
   const status = stock === 0 ? 'out' : stock <= 5 ? 'low' : 'in';
   try {
     const imageClause = request.file ? ', image_path = $10' : '';
-    const queryValues = request.file ? [...values, `/uploads/${request.file.filename}`, status, request.params.id] : [...values, status, request.params.id];
+    const image = request.file ? await imageUrl(request.file) : null;
+    const queryValues = request.file ? [...values, image, status, request.params.id] : [...values, status, request.params.id];
     const result = await pool.query(`UPDATE products SET name = $1, category_id = $2, brand_id = $3, price = $4, original_price = $5, stock_quantity = $6, badge = $7, specifications = $8, description = $9${imageClause}, status = $${request.file ? 11 : 10}, updated_at = NOW() WHERE id = $${request.file ? 12 : 11} RETURNING id`, queryValues);
     if (!result.rowCount) return response.status(404).json({ error: 'Product not found.' });
     response.json(result.rows[0]);
