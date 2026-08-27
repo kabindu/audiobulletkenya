@@ -17,6 +17,10 @@ fs.mkdirSync(uploadDirectory, { recursive: true });
 const pool = new Pool(process.env.DATABASE_URL ? {
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
+  max: 5,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000,
+  keepAlive: true,
 } : {
   host: process.env.PGHOST || 'localhost',
   port: Number(process.env.PGPORT || 5432),
@@ -24,7 +28,13 @@ const pool = new Pool(process.env.DATABASE_URL ? {
   user: process.env.PGUSER || 'postgres',
   password: process.env.PGPASSWORD || process.env.PG_PASSWORD || '',
   ssl: process.env.PGSSLMODE === 'require' ? { rejectUnauthorized: false } : undefined,
+  max: 5,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000,
+  keepAlive: true,
 });
+
+pool.on('error', error => console.error('PostgreSQL pool error:', error.message));
 
 const upload = multer({
   storage: process.env.VERCEL ? multer.memoryStorage() : multer.diskStorage({
@@ -123,7 +133,21 @@ async function initializeDatabase() {
   `);
 }
 
-const databaseReady = initializeDatabase();
+async function initializeDatabaseWithRetry() {
+  let lastError;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await initializeDatabase();
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt < 1) await new Promise(resolve => setTimeout(resolve, 250));
+    }
+  }
+  throw lastError;
+}
+
+const databaseReady = initializeDatabaseWithRetry();
 app.use('/api', async (_request, _response, next) => {
   try {
     await databaseReady;
@@ -133,18 +157,36 @@ app.use('/api', async (_request, _response, next) => {
   }
 });
 
+async function queryWithRetry(text, values = [], attempts = 2) {
+  let lastError;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await pool.query(text, values);
+    } catch (error) {
+      lastError = error;
+      if (attempt + 1 < attempts) await new Promise(resolve => setTimeout(resolve, 250));
+    }
+  }
+  throw lastError;
+}
+
 app.get('/api/catalog', async (_request, response) => {
   try {
     const [categories, brands, products] = await Promise.all([
-      pool.query('SELECT id, name FROM categories ORDER BY name'),
-      pool.query(`SELECT b.id, b.name, b.category_id, c.name AS category_name FROM brands b JOIN categories c ON c.id = b.category_id ORDER BY b.name`),
-      pool.query(`SELECT p.id, p.name, p.category_id, c.name AS category, p.brand_id, b.name AS brand, p.price, p.original_price AS "originalPrice", p.stock_quantity AS stock, p.badge, p.specifications AS spec, p.description, CASE WHEN p.image_path LIKE '%/undefined' THEN NULL ELSE p.image_path END AS image, p.status FROM products p JOIN categories c ON c.id = p.category_id JOIN brands b ON b.id = p.brand_id ORDER BY p.id DESC`),
+      queryWithRetry('SELECT id, name FROM categories ORDER BY name'),
+      queryWithRetry(`SELECT b.id, b.name, b.category_id, c.name AS category_name FROM brands b JOIN categories c ON c.id = b.category_id ORDER BY b.name`),
+      queryWithRetry(`SELECT p.id, p.name, p.category_id, c.name AS category, p.brand_id, b.name AS brand, p.price, p.original_price AS "originalPrice", p.stock_quantity AS stock, p.badge, p.specifications AS spec, p.description, CASE WHEN p.image_path LIKE '%/undefined' THEN NULL ELSE p.image_path END AS image, p.status FROM products p JOIN categories c ON c.id = p.category_id JOIN brands b ON b.id = p.brand_id ORDER BY p.id DESC`),
     ]);
     response.json({ categories: categories.rows, brands: brands.rows, products: products.rows });
   } catch (error) {
     console.error(error);
     response.status(500).json({ error: 'Could not load catalog data.' });
   }
+});
+
+app.use((error, _request, response, _next) => {
+  console.error('Unhandled server error:', error);
+  response.status(500).json({ error: 'Catalog service temporarily unavailable.' });
 });
 
 app.post('/api/categories', async (request, response) => {
