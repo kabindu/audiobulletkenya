@@ -296,6 +296,11 @@ function initStaticUI(){
     document.getElementById('shop').scrollIntoView({behavior:'smooth'});
   });
 
+  document.getElementById('catalogEntry').addEventListener('click', e=>{
+    if(e.target.closest('.cat-tile')) return;
+    document.getElementById('shop').scrollIntoView({behavior:'smooth'});
+  });
+
   // search category select
   document.getElementById('searchCategorySelect').innerHTML =
     `<option value="all">All categories</option>` +
@@ -304,10 +309,6 @@ function initStaticUI(){
   // filter: category checkboxes
   renderCategoryFilter();
 
-  // stats
-  document.getElementById('statProducts').textContent = PRODUCTS.length + '+';
-  const allBrands = new Set(Object.values(BRANDS_BY_CAT).flat());
-  document.getElementById('statBrands').textContent = allBrands.size;
 }
 
 function renderCategoryFilter(){
@@ -573,36 +574,6 @@ document.getElementById('mobileFilterBtn').addEventListener('click', ()=>{
 });
 function closeMobileFilters(){ filtersPanel.classList.remove('open'); }
 
-/* ============================================================
-   HOMEPAGE CAROUSELS (Amazon-style horizontal rows)
-   ============================================================ */
-function miniCard(pr){
-  const discount = pr.originalPrice ? Math.round(100*(1-pr.price/pr.originalPrice)) : null;
-  return `<div class="mini-card" data-id="${pr.id}">
-    <div class="mini-media">${productImage(pr.category, pr.name, pr.image)}</div>
-    <div class="mini-brand">${pr.brand}</div>
-    <div class="mini-title">${pr.name}</div>
-    <div class="mini-rating"><span class="stars">${starsSVG(pr.rating,11)}</span>${pr.rating} (${pr.reviews})</div>
-    <div class="mini-price">${fmt(pr.price)} ${discount?`<span style="font-size:11px;color:var(--danger);font-weight:600;">-${discount}%</span>`:''}</div>
-  </div>`;
-}
-function renderCarousels(){
-  const deals = PRODUCTS.filter(p=>p.originalPrice).slice(0,12);
-  const topRated = PRODUCTS.filter(p=>p.category==='microphones'||p.category==='speakers').sort((a,b)=>b.rating-a.rating).slice(0,12);
-  const fresh = PRODUCTS.filter(p=>p.newArrival).concat(PRODUCTS.slice(0,6)).slice(0,12);
-
-  document.getElementById('carouselDeals').innerHTML = deals.map(miniCard).join('');
-  document.getElementById('carouselTopRated').innerHTML = topRated.map(miniCard).join('');
-  document.getElementById('carouselNew').innerHTML = fresh.map(miniCard).join('');
-
-  document.querySelectorAll('.mini-card').forEach(card=>{
-    card.addEventListener('click', ()=>{
-      const pr = PRODUCTS.find(x=>x.id===card.dataset.id);
-      if(pr){ setCategory(pr.category); document.getElementById('shop').scrollIntoView({behavior:'smooth'}); }
-    });
-  });
-}
-
 /* "All" menu + Today's Deals quick actions */
 document.getElementById('allMenuBtn').addEventListener('click', ()=>{
   document.getElementById('catGrid').scrollIntoView({behavior:'smooth'});
@@ -626,7 +597,6 @@ async function bootStorefront(){
   initStaticUI();
   renderAll();
   updateCartUI();
-  renderCarousels();
 }
 
 bootStorefront();
