@@ -80,6 +80,7 @@ app.post('/admin/logout', requireAdmin, (_request, response) => {
   response.set('Set-Cookie', `${sessionCookie}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
   response.sendStatus(204);
 });
+app.get('/favicon.ico', (_request, response) => response.sendStatus(204));
 app.use('/admin', requireAdmin);
 app.use('/api', (request, response, next) => request.path === '/catalog' ? next() : requireAdmin(request, response, next));
 app.use('/uploads', express.static(uploadDirectory));
@@ -118,6 +119,7 @@ async function initializeDatabase() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     ALTER TABLE products ALTER COLUMN image_path TYPE TEXT;
+    UPDATE products SET image_path = NULL WHERE image_path = '/uploads/undefined' OR image_path LIKE '%/undefined';
   `);
 }
 
@@ -136,7 +138,7 @@ app.get('/api/catalog', async (_request, response) => {
     const [categories, brands, products] = await Promise.all([
       pool.query('SELECT id, name FROM categories ORDER BY name'),
       pool.query(`SELECT b.id, b.name, b.category_id, c.name AS category_name FROM brands b JOIN categories c ON c.id = b.category_id ORDER BY b.name`),
-      pool.query(`SELECT p.id, p.name, p.category_id, c.name AS category, p.brand_id, b.name AS brand, p.price, p.original_price AS "originalPrice", p.stock_quantity AS stock, p.badge, p.specifications AS spec, p.description, p.image_path AS image, p.status FROM products p JOIN categories c ON c.id = p.category_id JOIN brands b ON b.id = p.brand_id ORDER BY p.id DESC`),
+      pool.query(`SELECT p.id, p.name, p.category_id, c.name AS category, p.brand_id, b.name AS brand, p.price, p.original_price AS "originalPrice", p.stock_quantity AS stock, p.badge, p.specifications AS spec, p.description, CASE WHEN p.image_path LIKE '%/undefined' THEN NULL ELSE p.image_path END AS image, p.status FROM products p JOIN categories c ON c.id = p.category_id JOIN brands b ON b.id = p.brand_id ORDER BY p.id DESC`),
     ]);
     response.json({ categories: categories.rows, brands: brands.rows, products: products.rows });
   } catch (error) {
@@ -223,6 +225,7 @@ async function imageUrl(file) {
     });
     return blob.url;
   }
+  if (file.buffer) return `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
   return `/uploads/${file.filename}`;
 }
 

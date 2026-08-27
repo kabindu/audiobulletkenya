@@ -66,7 +66,7 @@ const PRODUCT_IMAGE_POOLS = {
 };
 
 function imageForProduct(category, name){
-  const pool = PRODUCT_IMAGE_POOLS[category] || [PRODUCT_IMAGES[category]];
+  const pool = PRODUCT_IMAGE_POOLS[category] || [PRODUCT_IMAGES.speakers];
   const hash = [...name].reduce((total, character) => total + character.charCodeAt(0), 0);
   return pool[hash % pool.length];
 }
@@ -120,7 +120,9 @@ async function loadStorefrontCatalog(){
 }
 
 function productImage(category, alt, src = PRODUCT_IMAGES[category]){
-  return `<img src="${src}" alt="${alt}" loading="lazy" onerror="this.hidden=true;this.nextElementSibling.hidden=false;"><span class="image-fallback" hidden>${ICONS[category]}</span>`;
+  const imageSource = src || imageForProduct(category, alt);
+  const icon = ICONS[category] || ICONS.speakers;
+  return `<img src="${imageSource}" alt="${alt}" loading="lazy" onerror="this.hidden=true;this.nextElementSibling.hidden=false;"><span class="image-fallback" hidden>${icon}</span>`;
 }
 
 /* ============================================================
