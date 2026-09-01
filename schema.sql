@@ -29,3 +29,23 @@ CREATE TABLE IF NOT EXISTS products (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS orders (
+    id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    customer_name VARCHAR(150) NOT NULL,
+    customer_phone VARCHAR(20) NOT NULL,
+    customer_email VARCHAR(150),
+    delivery_address TEXT NOT NULL,
+    items JSONB NOT NULL,
+    subtotal NUMERIC(12, 2) NOT NULL CHECK (subtotal >= 0),
+    status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'paid', 'failed', 'cancelled')),
+    merchant_request_id VARCHAR(100),
+    checkout_request_id VARCHAR(100) UNIQUE,
+    mpesa_receipt VARCHAR(50),
+    result_desc TEXT,
+    payment_method VARCHAR(10) NOT NULL DEFAULT 'mpesa' CHECK (payment_method IN ('mpesa', 'card')),
+    card_last4 VARCHAR(4),
+    card_brand VARCHAR(20),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

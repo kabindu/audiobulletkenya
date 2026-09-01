@@ -248,7 +248,8 @@ const state = {
   minRating: 0,
   sort: 'featured',
 };
-let cart = {}; // id -> qty
+const CART_STORAGE_KEY = 'audiobullet_cart';
+let cart = JSON.parse(localStorage.getItem(CART_STORAGE_KEY) || '{}'); // id -> qty
 
 /* ============================================================
    HELPERS
@@ -278,26 +279,6 @@ function initStaticUI(){
     const btn = e.target.closest('button[data-cat]');
     if(!btn) return;
     setCategory(btn.dataset.cat);
-    document.getElementById('shop').scrollIntoView({behavior:'smooth'});
-  });
-
-  // category tiles
-  document.getElementById('catGrid').innerHTML = CATEGORIES.map(c=>{
-    const count = PRODUCTS.filter(p=>p.category===c.id).length;
-    return `<div class="cat-tile" data-cat="${c.id}">
-      <div class="icon-wrap">${productImage(c.id, c.name)}</div>
-      <div><h4>${c.name}</h4><span>${c.desc} &middot; ${count} listings</span></div>
-    </div>`;
-  }).join('');
-  document.getElementById('catGrid').addEventListener('click', e=>{
-    const tile = e.target.closest('.cat-tile');
-    if(!tile) return;
-    setCategory(tile.dataset.cat);
-    document.getElementById('shop').scrollIntoView({behavior:'smooth'});
-  });
-
-  document.getElementById('catalogEntry').addEventListener('click', e=>{
-    if(e.target.closest('.cat-tile')) return;
     document.getElementById('shop').scrollIntoView({behavior:'smooth'});
   });
 
@@ -485,6 +466,7 @@ function removeFromCart(id){
   renderProducts();
 }
 function updateCartUI(){
+  localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cart));
   const ids = Object.keys(cart);
   const totalQty = ids.reduce((s,id)=>s+cart[id],0);
   document.getElementById('cartCount').textContent = totalQty;
@@ -544,6 +526,9 @@ function closeCart(){
 document.getElementById('cartOpenBtn').addEventListener('click', openCart);
 document.getElementById('cartCloseBtn').addEventListener('click', closeCart);
 document.getElementById('overlay').addEventListener('click', ()=>{ closeCart(); closeMobileFilters(); });
+document.querySelector('.checkout-btn').addEventListener('click', ()=>{
+  if(Object.keys(cart).length) window.location.href = 'checkout.html';
+});
 
 document.getElementById('searchBtn').addEventListener('click', doSearch);
 document.getElementById('searchInput').addEventListener('keydown', e=>{ if(e.key==='Enter') doSearch(); });
@@ -574,14 +559,8 @@ document.getElementById('mobileFilterBtn').addEventListener('click', ()=>{
 });
 function closeMobileFilters(){ filtersPanel.classList.remove('open'); }
 
-/* "All" menu + Today's Deals quick actions */
+/* "All" menu quick action */
 document.getElementById('allMenuBtn').addEventListener('click', ()=>{
-  document.getElementById('catGrid').scrollIntoView({behavior:'smooth'});
-});
-document.getElementById('dealsLink').addEventListener('click', ()=>{
-  state.category='all'; state.brands.clear(); state.sort='price-asc';
-  document.getElementById('sortSelect').value='price-asc';
-  renderAll();
   document.getElementById('shop').scrollIntoView({behavior:'smooth'});
 });
 

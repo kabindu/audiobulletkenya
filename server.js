@@ -92,7 +92,7 @@ app.post('/admin/logout', requireAdmin, (_request, response) => {
 });
 app.get('/favicon.ico', (_request, response) => response.sendStatus(204));
 app.use('/admin', requireAdmin);
-app.use('/api', (request, response, next) => request.path === '/catalog' ? next() : requireAdmin(request, response, next));
+app.use('/api', (request, response, next) => (request.path === '/catalog' || request.path.startsWith('/mpesa/') || request.path.startsWith('/card/')) ? next() : requireAdmin(request, response, next));
 app.use('/uploads', express.static(uploadDirectory));
 if (process.env.VERCEL) app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use(express.static(__dirname));
@@ -130,6 +130,28 @@ async function initializeDatabase() {
     );
     ALTER TABLE products ALTER COLUMN image_path TYPE TEXT;
     UPDATE products SET image_path = NULL WHERE image_path = '/uploads/undefined' OR image_path LIKE '%/undefined';
+    CREATE TABLE IF NOT EXISTS orders (
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      customer_name VARCHAR(150) NOT NULL,
+      customer_phone VARCHAR(20) NOT NULL,
+      customer_email VARCHAR(150),
+      delivery_address TEXT NOT NULL,
+      items JSONB NOT NULL,
+      subtotal NUMERIC(12, 2) NOT NULL CHECK (subtotal >= 0),
+      status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'paid', 'failed', 'cancelled')),
+      merchant_request_id VARCHAR(100),
+      checkout_request_id VARCHAR(100) UNIQUE,
+      mpesa_receipt VARCHAR(50),
+      result_desc TEXT,
+      payment_method VARCHAR(10) NOT NULL DEFAULT 'mpesa' CHECK (payment_method IN ('mpesa', 'card')),
+      card_last4 VARCHAR(4),
+      card_brand VARCHAR(20),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_method VARCHAR(10) NOT NULL DEFAULT 'mpesa';
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS card_last4 VARCHAR(4);
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS card_brand VARCHAR(20);
   `);
 }
 
@@ -181,6 +203,219 @@ app.get('/api/catalog', async (_request, response) => {
   } catch (error) {
     console.error(error);
     response.status(500).json({ error: 'Could not load catalog data.' });
+  }
+});
+
+/* ============================================================
+   M-PESA (Daraja) STK PUSH CHECKOUT
+   ============================================================ */
+const mpesaBaseUrl = process.env.MPESA_ENV === 'production' ? 'https://api.safaricom.co.ke' : 'https://sandbox.safaricom.co.ke';
+
+function normalizeMpesaPhone(raw) {
+  const digits = String(raw || '').replace(/\D/g, '');
+  if (digits.startsWith('254') && digits.length === 12) return digits;
+  if (digits.startsWith('0') && digits.length === 10) return `254${digits.slice(1)}`;
+  if (digits.length === 9) return `254${digits}`;
+  return null;
+}
+
+async function getMpesaAccessToken() {
+  const auth = Buffer.from(`${process.env.MPESA_CONSUMER_KEY}:${process.env.MPESA_CONSUMER_SECRET}`).toString('base64');
+  const response = await fetch(`${mpesaBaseUrl}/oauth/v1/generate?grant_type=client_credentials`, {
+    headers: { Authorization: `Basic ${auth}` },
+  });
+  if (!response.ok) throw new Error('Could not authenticate with M-Pesa.');
+  const data = await response.json();
+  return data.access_token;
+}
+
+app.post('/api/mpesa/stkpush', async (request, response) => {
+  const body = request.body || {};
+  const customer = body.customer || {};
+  const items = Array.isArray(body.items) ? body.items : [];
+  const name = String(customer.name || '').trim();
+  const address = String(customer.address || '').trim();
+  const email = customer.email ? String(customer.email).trim() : null;
+  const phone = normalizeMpesaPhone(customer.phone);
+  if (!name || !address || !phone) return response.status(400).json({ error: 'Name, phone, and delivery address are required.' });
+  if (!items.length) return response.status(400).json({ error: 'Your cart is empty.' });
+  if (!process.env.MPESA_CONSUMER_KEY || !process.env.MPESA_CONSUMER_SECRET) return response.status(503).json({ error: 'M-Pesa payments are not configured yet.' });
+
+  try {
+    const ids = items.map(item => Number(item.productId)).filter(Boolean);
+    const priced = await queryWithRetry('SELECT id, price FROM products WHERE id = ANY($1)', [ids]);
+    const priceMap = new Map(priced.rows.map(row => [row.id, Number(row.price)]));
+    let subtotal = 0;
+    const orderItems = items.map(item => {
+      const id = Number(item.productId);
+      const qty = Math.max(1, Number(item.qty) || 1);
+      const price = priceMap.get(id);
+      if (price == null) throw new Error('One or more cart items are no longer available.');
+      subtotal += price * qty;
+      return { productId: id, qty, price };
+    });
+    const amount = Math.round(subtotal);
+    if (amount < 1) return response.status(400).json({ error: 'Order total must be at least KSh 1.' });
+
+    const orderResult = await queryWithRetry(
+      `INSERT INTO orders (customer_name, customer_phone, customer_email, delivery_address, items, subtotal) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+      [name, phone, email, address, JSON.stringify(orderItems), amount]
+    );
+    const orderId = orderResult.rows[0].id;
+
+    const accessToken = await getMpesaAccessToken();
+    const timestamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
+    const shortcode = process.env.MPESA_SHORTCODE;
+    const password = Buffer.from(`${shortcode}${process.env.MPESA_PASSKEY}${timestamp}`).toString('base64');
+
+    const stkResponse = await fetch(`${mpesaBaseUrl}/mpesa/stkpush/v1/processrequest`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        BusinessShortCode: shortcode,
+        Password: password,
+        Timestamp: timestamp,
+        TransactionType: 'CustomerPayBillOnline',
+        Amount: amount,
+        PartyA: phone,
+        PartyB: shortcode,
+        PhoneNumber: phone,
+        CallBackURL: process.env.MPESA_CALLBACK_URL,
+        AccountReference: `AudioBullet-${orderId}`,
+        TransactionDesc: `AudioBullet order #${orderId}`,
+      }),
+    });
+    const stkData = await stkResponse.json();
+    if (!stkResponse.ok || stkData.ResponseCode !== '0') {
+      await queryWithRetry(`UPDATE orders SET status = 'failed', result_desc = $2, updated_at = NOW() WHERE id = $1`, [orderId, stkData.errorMessage || stkData.ResponseDescription || 'STK push failed.']);
+      return response.status(502).json({ error: stkData.errorMessage || stkData.ResponseDescription || 'Could not start the M-Pesa payment.' });
+    }
+
+    await queryWithRetry(
+      `UPDATE orders SET merchant_request_id = $2, checkout_request_id = $3, updated_at = NOW() WHERE id = $1`,
+      [orderId, stkData.MerchantRequestID, stkData.CheckoutRequestID]
+    );
+    response.json({ orderId, checkoutRequestId: stkData.CheckoutRequestID });
+  } catch (error) {
+    console.error('STK push error:', error);
+    response.status(500).json({ error: error.message || 'Could not start the M-Pesa payment.' });
+  }
+});
+
+app.post('/api/mpesa/callback', async (request, response) => {
+  try {
+    const callback = request.body?.Body?.stkCallback;
+    if (!callback) return response.json({ ResultCode: 0, ResultDesc: 'Accepted' });
+    const { CheckoutRequestID, ResultCode, ResultDesc, CallbackMetadata } = callback;
+    if (ResultCode === 0) {
+      const items = CallbackMetadata?.Item || [];
+      const receipt = items.find(item => item.Name === 'MpesaReceiptNumber')?.Value || null;
+      await queryWithRetry(
+        `UPDATE orders SET status = 'paid', mpesa_receipt = $2, result_desc = $3, updated_at = NOW() WHERE checkout_request_id = $1`,
+        [CheckoutRequestID, receipt, ResultDesc]
+      );
+    } else {
+      await queryWithRetry(
+        `UPDATE orders SET status = 'failed', result_desc = $2, updated_at = NOW() WHERE checkout_request_id = $1`,
+        [CheckoutRequestID, ResultDesc]
+      );
+    }
+    response.json({ ResultCode: 0, ResultDesc: 'Accepted' });
+  } catch (error) {
+    console.error('M-Pesa callback error:', error);
+    response.json({ ResultCode: 0, ResultDesc: 'Accepted' });
+  }
+});
+
+app.get('/api/mpesa/status/:checkoutRequestId', async (request, response) => {
+  try {
+    const result = await queryWithRetry('SELECT id, status, mpesa_receipt, result_desc FROM orders WHERE checkout_request_id = $1', [request.params.checkoutRequestId]);
+    if (!result.rowCount) return response.status(404).json({ error: 'Order not found.' });
+    const order = result.rows[0];
+    response.json({ orderId: order.id, status: order.status, mpesaReceipt: order.mpesa_receipt, message: order.result_desc });
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Could not check payment status.' });
+  }
+});
+
+/* ============================================================
+   CARD CHECKOUT (demo/simulated — no gateway configured)
+   Raw card numbers and CVVs are never persisted; only the last 4
+   digits and detected brand are stored for the order record.
+   ============================================================ */
+function luhnCheck(digits) {
+  let sum = 0;
+  let alternate = false;
+  for (let i = digits.length - 1; i >= 0; i -= 1) {
+    let digit = Number(digits[i]);
+    if (alternate) {
+      digit *= 2;
+      if (digit > 9) digit -= 9;
+    }
+    sum += digit;
+    alternate = !alternate;
+  }
+  return sum % 10 === 0;
+}
+
+function detectCardBrand(digits) {
+  if (/^4/.test(digits)) return 'Visa';
+  if (/^(5[1-5]|2[2-7])/.test(digits)) return 'Mastercard';
+  if (/^3[47]/.test(digits)) return 'Amex';
+  if (/^6(?:011|5)/.test(digits)) return 'Discover';
+  return 'Card';
+}
+
+app.post('/api/card/charge', async (request, response) => {
+  const body = request.body || {};
+  const customer = body.customer || {};
+  const card = body.card || {};
+  const items = Array.isArray(body.items) ? body.items : [];
+  const name = String(customer.name || '').trim();
+  const address = String(customer.address || '').trim();
+  const phone = String(customer.phone || '').trim();
+  const email = customer.email ? String(customer.email).trim() : null;
+  if (!name || !address || !phone) return response.status(400).json({ error: 'Name, phone, and delivery address are required.' });
+  if (!items.length) return response.status(400).json({ error: 'Your cart is empty.' });
+
+  const cardNumber = String(card.number || '').replace(/\s+/g, '');
+  const cardName = String(card.name || '').trim();
+  const expiry = String(card.expiry || '').trim();
+  const cvv = String(card.cvv || '').trim();
+  const expiryMatch = /^(\d{2})\/(\d{2})$/.exec(expiry);
+  if (!/^\d{12,19}$/.test(cardNumber) || !luhnCheck(cardNumber)) return response.status(400).json({ error: 'Enter a valid card number.' });
+  if (!cardName) return response.status(400).json({ error: 'Enter the name on the card.' });
+  if (!expiryMatch) return response.status(400).json({ error: 'Enter the expiry as MM/YY.' });
+  if (!/^\d{3,4}$/.test(cvv)) return response.status(400).json({ error: 'Enter a valid CVV.' });
+  const expiryDate = new Date(2000 + Number(expiryMatch[2]), Number(expiryMatch[1]));
+  if (Number(expiryMatch[1]) < 1 || Number(expiryMatch[1]) > 12 || expiryDate < new Date()) return response.status(400).json({ error: 'This card has expired.' });
+
+  try {
+    const ids = items.map(item => Number(item.productId)).filter(Boolean);
+    const priced = await queryWithRetry('SELECT id, price FROM products WHERE id = ANY($1)', [ids]);
+    const priceMap = new Map(priced.rows.map(row => [row.id, Number(row.price)]));
+    let subtotal = 0;
+    const orderItems = items.map(item => {
+      const id = Number(item.productId);
+      const qty = Math.max(1, Number(item.qty) || 1);
+      const price = priceMap.get(id);
+      if (price == null) throw new Error('One or more cart items are no longer available.');
+      subtotal += price * qty;
+      return { productId: id, qty, price };
+    });
+    const amount = Math.round(subtotal);
+    if (amount < 1) return response.status(400).json({ error: 'Order total must be at least KSh 1.' });
+
+    const orderResult = await queryWithRetry(
+      `INSERT INTO orders (customer_name, customer_phone, customer_email, delivery_address, items, subtotal, status, payment_method, card_last4, card_brand)
+       VALUES ($1,$2,$3,$4,$5,$6,'paid','card',$7,$8) RETURNING id`,
+      [name, phone, email, address, JSON.stringify(orderItems), amount, cardNumber.slice(-4), detectCardBrand(cardNumber)]
+    );
+    response.json({ orderId: orderResult.rows[0].id, status: 'paid' });
+  } catch (error) {
+    console.error('Card charge error:', error);
+    response.status(500).json({ error: error.message || 'Could not process the card payment.' });
   }
 });
 

@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Checkout &mdash; AudioBullet Kenya</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body class="checkout-body">
+
+<header class="checkout-header">
+  <div class="container checkout-header-row">
+    <a href="home.html" class="logo">
+      <svg class="logo-mark" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="2" y="2" width="36" height="36" rx="9" stroke="#e0912e" stroke-width="2"/>
+        <rect x="10" y="22" width="4" height="10" rx="1.5" fill="#e0912e"/>
+        <rect x="18" y="14" width="4" height="18" rx="1.5" fill="#4fb6a6"/>
+        <rect x="26" y="9" width="4" height="23" rx="1.5" fill="#e0912e"/>
+      </svg>
+      <div>
+        <div class="logo-text">Audio<span>Bullet Kenya</span></div>
+        <span class="logo-tag">Secure Checkout</span>
+      </div>
+    </a>
+    <a href="home.html" class="checkout-back">&larr; Back to shop</a>
+  </div>
+</header>
+
+<main class="checkout-main container">
+  <h1 class="checkout-title">Checkout</h1>
+
+  <div class="checkout-grid">
+    <section class="checkout-form-col">
+      <div class="checkout-card">
+        <h3>Delivery details</h3>
+        <form id="checkoutForm" novalidate>
+          <label class="field">
+            <span>Full name</span>
+            <input type="text" id="custName" name="name" placeholder="e.g. Jane Wanjiru" required>
+          </label>
+          <label class="field">
+            <span>M-Pesa phone number</span>
+            <input type="tel" id="custPhone" name="phone" placeholder="07XX XXX XXX" required>
+          </label>
+          <label class="field">
+            <span>Email (optional)</span>
+            <input type="email" id="custEmail" name="email" placeholder="you@example.com">
+          </label>
+          <label class="field">
+            <span>Delivery address</span>
+            <textarea id="custAddress" name="address" rows="3" placeholder="Street, building, area, city" required></textarea>
+          </label>
+        </form>
+      </div>
+
+      <div class="checkout-card">
+        <h3>Order items</h3>
+        <div id="checkoutItems" class="checkout-items"></div>
+      </div>
+    </section>
+
+    <aside class="checkout-summary-col">
+      <div class="checkout-card checkout-summary-card">
+        <h3>Order summary</h3>
+        <div class="summary-row"><span>Subtotal</span><strong id="sumSubtotal">KSh 0</strong></div>
+        <div class="summary-row"><span>Delivery</span><strong id="sumDelivery">Calculated on dispatch</strong></div>
+        <div class="summary-row summary-total"><span>Total due now</span><strong id="sumTotal">KSh 0</strong></div>
+
+        <div class="pay-method-tabs" role="tablist">
+          <button type="button" class="pay-method-tab active" data-method="mpesa">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2.5"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+            M-Pesa
+          </button>
+          <button type="button" class="pay-method-tab" data-method="card">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2.5"/><line x1="2" y1="10" x2="22" y2="10"/><line x1="6" y1="15" x2="10" y2="15"/></svg>
+            Card
+          </button>
+        </div>
+
+        <button id="payBtn" class="checkout-btn pay-btn" type="button">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2.5"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+          <span id="payBtnLabel">Pay with M-Pesa</span>
+        </button>
+        <div id="payStatus" class="pay-status" hidden></div>
+        <div id="payHint" class="cart-note">You will receive an M-Pesa prompt (STK Push) on your phone to enter your PIN and complete payment.</div>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<!-- ============ M-PESA DETAILS POPUP ============ -->
+<div class="modal-overlay" id="mpesaModalOverlay" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="mpesaModalTitle">
+    <div class="modal-head">
+      <h3 id="mpesaModalTitle">Pay with M-Pesa</h3>
+      <button class="cart-close" id="mpesaModalClose" type="button" aria-label="Close">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="4" y1="4" x2="20" y2="20"/><line x1="20" y1="4" x2="4" y2="20"/></svg>
+      </button>
+    </div>
+    <form id="mpesaForm" novalidate>
+      <label class="field">
+        <span>M-Pesa phone number</span>
+        <input type="tel" id="mpesaPhone" inputmode="numeric" autocomplete="tel" placeholder="07XX XXX XXX" maxlength="13" required>
+      </label>
+      <button type="submit" class="checkout-btn pay-btn" id="mpesaSubmitBtn">Send prompt for <span id="mpesaSubmitAmount">KSh 0</span></button>
+      <div id="mpesaModalStatus" class="pay-status" hidden></div>
+      <div class="cart-note">You will receive an M-Pesa prompt (STK Push) on this number to enter your PIN and complete payment.</div>
+    </form>
+  </div>
+</div>
+
+<!-- ============ CARD DETAILS POPUP ============ -->
+<div class="modal-overlay" id="cardModalOverlay" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="cardModalTitle">
+    <div class="modal-head">
+      <h3 id="cardModalTitle">Pay with card</h3>
+      <button class="cart-close" id="cardModalClose" type="button" aria-label="Close">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="4" y1="4" x2="20" y2="20"/><line x1="20" y1="4" x2="4" y2="20"/></svg>
+      </button>
+    </div>
+    <form id="cardForm" novalidate>
+      <label class="field">
+        <span>Card number</span>
+        <input type="text" id="cardNumber" inputmode="numeric" autocomplete="cc-number" placeholder="4242 4242 4242 4242" maxlength="19" required>
+      </label>
+      <label class="field">
+        <span>Name on card</span>
+        <input type="text" id="cardName" autocomplete="cc-name" placeholder="As printed on the card" required>
+      </label>
+      <div class="field-row">
+        <label class="field">
+          <span>Expiry (MM/YY)</span>
+          <input type="text" id="cardExpiry" autocomplete="cc-exp" placeholder="MM/YY" maxlength="5" required>
+        </label>
+        <label class="field">
+          <span>CVV</span>
+          <input type="text" id="cardCvv" inputmode="numeric" autocomplete="cc-csc" placeholder="123" maxlength="4" required>
+        </label>
+      </div>
+      <button type="submit" class="checkout-btn pay-btn" id="cardSubmitBtn">Pay <span id="cardSubmitAmount">KSh 0</span></button>
+      <div id="cardModalStatus" class="pay-status" hidden></div>
+      <div class="cart-note">Your card details are used only to process this payment and are not stored.</div>
+    </form>
+  </div>
+</div>
+
+<script src="js/checkout.js"></script>
+</body>
+</html>
