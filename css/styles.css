@@ -363,7 +363,7 @@ body{background:var(--bg);font-family:Arial,Helvetica,sans-serif;color:var(--tex
 h1,h2,h3,h4{font-family:Arial,Helvetica,sans-serif;letter-spacing:0;}
 .container,.container-fluid{padding-left:18px;padding-right:18px;}
 header.main-header{border-bottom:0;}
-.header-row{height:62px;gap:14px;}.logo{padding:5px 7px;border-radius:0;}.logo-mark{width:30px;height:30px;}
+.header-row{min-height:62px;gap:14px;}.logo{padding:5px 7px;border-radius:0;}.logo-mark{width:30px;height:30px;}
 .logo-text{font-size:19px;color:#fff;}.logo-text span{color:#241b06;}.logo-tag{color:rgba(255,255,255,.8);}
 .search-wrap{height:40px;}
 .search-input{font-size:14px;}.search-btn{padding:0 18px;}
@@ -395,4 +395,4 @@ footer{background:#fff3d6;border-top:1px solid var(--border);padding-top:34px;}.
 .description-section{background:#fff;border-top:1px solid var(--border);border-bottom:1px solid var(--border);padding:30px 0;}.description-grid{display:grid;grid-template-columns:1.4fr repeat(3,1fr);gap:24px;align-items:start;}.description-copy h2{font-size:24px;margin-bottom:8px;}.description-copy p{color:#565959;line-height:1.6;max-width:620px;}.description-point{border-left:1px solid #ddd;padding-left:16px;}.description-point strong{display:block;font-size:14px;margin-bottom:5px;}.description-point span{display:block;color:#565959;font-size:13px;line-height:1.45;}@media(max-width:800px){.description-grid{grid-template-columns:1fr 1fr;}.description-copy{grid-column:1/-1;}}@media(max-width:500px){.description-grid{grid-template-columns:1fr;}.description-copy{grid-column:auto;}.description-point{border-left:0;border-top:1px solid #ddd;padding:12px 0 0;}}
 @media (min-width:1440px){.product-grid{grid-template-columns:repeat(5,1fr);}}
 @media (max-width:980px){.filters{padding-right:20px;}.product-grid{grid-template-columns:repeat(3,1fr);}}
-@media (max-width:600px){.product-grid{grid-template-columns:repeat(2,1fr);}.hero .container{padding-top:22px;padding-bottom:22px;}.hero-visual{display:none;}}
+@media (max-width:600px){.product-grid{grid-template-columns:1fr;}.hero .container{padding-top:22px;padding-bottom:22px;}.hero-visual{display:none;}}
