@@ -92,7 +92,9 @@ function openProductModal(product = null) {
       const input = $(`#productForm [name="${name}"]`);
       if (input) input.value = value ?? '';
     });
-    if (product.image) { $('#productImagePreview').src = product.image; $('#productImagePreview').classList.add('visible'); }
+    [['#productImagePreview', product.image], ['#productImagePreview2', product.image2], ['#productImagePreview3', product.image3]].forEach(([selector, src]) => {
+      if (src) { $(selector).src = src; $(selector).classList.add('visible'); }
+    });
   }
 }
 
@@ -100,7 +102,7 @@ function closeProductModal() {
   $('#productModal').classList.remove('open');
   $('#productModal').setAttribute('aria-hidden', 'true');
   $('#productForm').reset();
-  $('#productImagePreview').classList.remove('visible');
+  ['#productImagePreview', '#productImagePreview2', '#productImagePreview3'].forEach(selector => $(selector).classList.remove('visible'));
   state.editingProductId = null;
 }
 
@@ -138,7 +140,7 @@ async function loadCatalog() {
 
 document.querySelectorAll('.nav-item[data-view]').forEach(item => item.addEventListener('click', () => setView(item.dataset.view)));
 document.querySelectorAll('[data-view-target]').forEach(item => item.addEventListener('click', () => setView(item.dataset.viewTarget)));
-document.querySelectorAll('[data-open-product]').forEach(button => button.addEventListener('click', openProductModal));
+document.querySelectorAll('[data-open-product]').forEach(button => button.addEventListener('click', () => openProductModal()));
 document.querySelectorAll('[data-close-product]').forEach(button => button.addEventListener('click', closeProductModal));
 document.querySelectorAll('[data-open-entity]').forEach(button => button.addEventListener('click', () => openEntityModal(button.dataset.openEntity)));
 document.querySelectorAll('[data-close-entity]').forEach(button => button.addEventListener('click', closeEntityModal));
@@ -149,6 +151,8 @@ $('#categoryFilter').addEventListener('change', renderProducts);
 $('#stockFilter').addEventListener('change', renderProducts);
 $('#mobileMenu').addEventListener('click', () => $('#sidebar').classList.toggle('open'));
 $('#productForm [name="image"]').addEventListener('change', event => readImage(event.target, $('#productImagePreview')));
+$('#productForm [name="image2"]').addEventListener('change', event => readImage(event.target, $('#productImagePreview2')));
+$('#productForm [name="image3"]').addEventListener('change', event => readImage(event.target, $('#productImagePreview3')));
 document.addEventListener('click', event => {
   const button = event.target.closest('[data-edit-category], [data-edit-brand], [data-delete-category], [data-delete-brand], [data-edit-product], [data-delete-product]');
   if (!button) return;

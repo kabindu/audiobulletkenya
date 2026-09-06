@@ -25,6 +25,8 @@ CREATE TABLE IF NOT EXISTS products (
     specifications VARCHAR(255),
     description TEXT,
     image_path VARCHAR(500),
+    image_path_2 VARCHAR(500),
+    image_path_3 VARCHAR(500),
     status VARCHAR(10) NOT NULL DEFAULT 'in' CHECK (status IN ('in', 'low', 'out')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
