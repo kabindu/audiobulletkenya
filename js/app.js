@@ -319,7 +319,7 @@ function productCard(pr){
       <div class="card-brand">${pr.brand}</div>
       <div class="card-title">${pr.name}</div>
       <div class="card-spec mono">${pr.spec}</div>
-      <div class="card-rating"><span class="stars">${starsSVG(pr.rating,13)}</span> ${pr.rating} <span style="color:var(--text-faint)">(${pr.reviews})</span></div>
+      <div class="card-rating"><span class="stars">${starsSVG(pr.rating,13)}</span> ${pr.rating} <span class="review-count" style="color:var(--text-faint)">(${pr.reviews})</span></div>
       <div class="card-price-row">
         <span class="card-price">${fmt(pr.price)}</span>
         ${pr.originalPrice ? `<span class="card-price-old">${fmt(pr.originalPrice)}</span>` : ''}
