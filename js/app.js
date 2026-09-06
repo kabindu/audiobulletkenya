@@ -5,6 +5,21 @@
    this file) so the product detail page can reuse them too.
    ============================================================ */
 
+function renderSkeletonGrid(count = 9){
+  const grid = document.getElementById('productGrid');
+  if(!grid) return;
+  grid.innerHTML = Array.from({length: count}).map(() => `
+    <article class="card skeleton-card">
+      <div class="card-media skeleton-block"></div>
+      <div class="card-body">
+        <div class="skeleton-line" style="width:35%;height:8px;"></div>
+        <div class="skeleton-line" style="width:90%;"></div>
+        <div class="skeleton-line" style="width:50%;"></div>
+        <div class="skeleton-line" style="width:40%;height:16px;margin-top:4px;"></div>
+      </div>
+    </article>`).join('');
+}
+
 async function loadStorefrontCatalog(){
   const response = await fetch('/api/catalog');
   if(!response.ok) throw new Error('Could not load the catalog.');
@@ -338,7 +353,10 @@ function renderProducts(){
   document.getElementById('resultsNum').textContent = list.length;
   const grid = document.getElementById('productGrid');
   if(!list.length){
-    grid.innerHTML = `<div class="empty-state"><h3>No gear matches those filters</h3><p>Try clearing a filter or searching a different term.</p></div>`;
+    grid.innerHTML = `<div class="empty-state">
+      <svg width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <h3>No gear matches those filters</h3><p>Try clearing a filter or searching a different term.</p>
+    </div>`;
     return;
   }
   grid.innerHTML = list.map(productCard).join('');
@@ -364,9 +382,16 @@ function renderAll(){
 /* ============================================================
    CART
    ============================================================ */
+function bumpCartBadge(){
+  const badge = document.getElementById('cartCount');
+  badge.classList.remove('bump');
+  void badge.offsetWidth; // restart the animation even if it's already mid-bump
+  badge.classList.add('bump');
+}
 function addToCart(id){
   cart[id] = (cart[id]||0) + 1;
   updateCartUI();
+  bumpCartBadge();
   renderProducts();
   openCart();
 }
@@ -375,6 +400,7 @@ function changeQty(id, delta){
   cart[id] += delta;
   if(cart[id] <= 0) delete cart[id];
   updateCartUI();
+  if(delta > 0) bumpCartBadge();
   renderProducts();
 }
 function removeFromCart(id){
@@ -390,7 +416,10 @@ function updateCartUI(){
 
   const itemsWrap = document.getElementById('cartItems');
   if(!ids.length){
-    itemsWrap.innerHTML = `<div class="cart-empty">Your cart is empty.<br>Browse the catalog to add gear.</div>`;
+    itemsWrap.innerHTML = `<div class="cart-empty">
+      <svg width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
+      <p>Your cart is empty.<br>Browse the catalog to add gear.</p>
+    </div>`;
     document.getElementById('cartSubtotal').textContent = fmt(0);
     return;
   }
@@ -485,6 +514,7 @@ document.getElementById('allMenuBtn').addEventListener('click', ()=>{
    BOOT
    ============================================================ */
 async function bootStorefront(){
+  renderSkeletonGrid();
   try {
     await loadStorefrontCatalog();
   } catch(error) {
