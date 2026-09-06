@@ -227,6 +227,8 @@ header.main-header{position:sticky;top:0;z-index:60;background:var(--accent-2);b
 /* ---------- Footer ---------- */
 footer{background:#e8f0ed;padding-top:52px;border-top:1px solid var(--border);}
 .footer-grid{display:grid;grid-template-columns:1.6fr repeat(4,1fr);gap:32px;padding-bottom:40px;}
+.footer-logo{font-size:20px;font-weight:700;letter-spacing:-.02em;color:var(--text);}
+.footer-logo span{color:var(--accent-2);}
 .footer-brand p{color:var(--text-faint);font-size:13px;margin:14px 0 18px;max-width:280px;}
 .newsletter{display:flex;gap:0;max-width:280px;}
 .newsletter input{flex:1;background:var(--surface);border:1px solid var(--border);border-right:none;border-radius:7px 0 0 7px;padding:10px 12px;color:var(--text);font-size:12.5px;}
