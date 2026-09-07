@@ -511,6 +511,39 @@ document.getElementById('allMenuBtn').addEventListener('click', ()=>{
 });
 
 /* ============================================================
+   RECENTLY VIEWED (works for guests too — no account needed)
+   ============================================================ */
+function renderRecentlyViewed(){
+  const strip = document.getElementById('recentStrip');
+  const track = document.getElementById('recentTrack');
+  if(!strip || !track) return;
+  const items = getRecentlyViewedIds().map(id => PRODUCTS.find(pr => pr.id === id)).filter(Boolean);
+  if(!items.length){ strip.hidden = true; return; }
+  strip.hidden = false;
+  track.innerHTML = items.map(pr => `
+    <a class="mini-card" href="product.html?id=${encodeURIComponent(pr.id)}">
+      <div class="mini-media">${productImage(pr.category, pr.name, pr.image)}</div>
+      <div class="mini-brand">${pr.brand}</div>
+      <div class="mini-title">${pr.name}</div>
+      <div class="mini-price">${fmt(pr.price)}</div>
+    </a>`).join('');
+}
+
+/* ============================================================
+   ACCOUNT LABEL (shows first name in the header when signed in)
+   ============================================================ */
+async function updateAccountLabel(){
+  const label = document.getElementById('accountLabel');
+  if(!label) return;
+  try {
+    const response = await fetch('/api/account/me');
+    if(!response.ok) return;
+    const customer = await response.json();
+    label.textContent = customer.name.split(' ')[0];
+  } catch(error) { /* stay signed out visually — not worth surfacing */ }
+}
+
+/* ============================================================
    BOOT
    ============================================================ */
 async function bootStorefront(){
@@ -523,6 +556,8 @@ async function bootStorefront(){
   initStaticUI();
   renderAll();
   updateCartUI();
+  renderRecentlyViewed();
+  updateAccountLabel();
 }
 
 bootStorefront();

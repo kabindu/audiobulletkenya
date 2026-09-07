@@ -41,10 +41,10 @@
     </div>
 
     <div class="header-actions">
-      <div class="header-action">
+      <a class="header-action" href="account.html">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/></svg>
-        <span>Account</span>
-      </div>
+        <span id="accountLabel">Account</span>
+      </a>
       <div class="header-action">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 1.5-2 1.9-2 3.5"/><circle cx="12" cy="16.5" r=".4" fill="currentColor"/></svg>
         <span>Help</span>
@@ -125,6 +125,16 @@
         </div>
         <div class="product-grid" id="productGrid"></div>
       </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ RECENTLY VIEWED (guests included — localStorage only) ============ -->
+<section class="carousel-section" id="recentStrip" hidden>
+  <div class="container">
+    <div class="carousel-head"><h3>Recently viewed</h3></div>
+    <div class="carousel-row">
+      <div class="carousel-track" id="recentTrack"></div>
     </div>
   </div>
 </section>

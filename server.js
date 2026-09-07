@@ -59,11 +59,15 @@ function sessionToken(username, expiresAt) {
   return `${Buffer.from(payload).toString('base64url')}.${signature}`;
 }
 
-function isAuthenticated(request) {
-  const cookies = Object.fromEntries((request.headers.cookie || '').split(';').filter(Boolean).map(cookie => {
+function getCookies(request) {
+  return Object.fromEntries((request.headers.cookie || '').split(';').filter(Boolean).map(cookie => {
     const separator = cookie.indexOf('=');
     return [cookie.slice(0, separator).trim(), decodeURIComponent(cookie.slice(separator + 1))];
   }));
+}
+
+function isAuthenticated(request) {
+  const cookies = getCookies(request);
   const [encodedPayload, signature] = (cookies[sessionCookie] || '').split('.');
   if (!encodedPayload || !signature) return false;
   const payload = Buffer.from(encodedPayload, 'base64url').toString('utf8');
@@ -91,9 +95,129 @@ app.post('/admin/logout', requireAdmin, (_request, response) => {
   response.set('Set-Cookie', `${sessionCookie}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
   response.sendStatus(204);
 });
+
+/* ============================================================
+   CUSTOMER ACCOUNTS — deliberately lightweight: no email
+   verification, no password reset flow, just register/login/logout
+   backed by a signed cookie (same approach as the admin session
+   above). Lets checkout attach orders to an account, and lets the
+   header show who's signed in.
+   ============================================================ */
+const customerSessionCookie = 'audiobullet_customer';
+const customerSessionLifetime = 30 * 24 * 60 * 60 * 1000; // 30 days — customers should stay signed in across visits
+const customerSessionSecret = process.env.SESSION_SECRET || 'audiobullet-dev-session-secret';
+
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return `${salt}:${hash}`;
+}
+
+function verifyPassword(password, stored) {
+  const [salt, hash] = String(stored || '').split(':');
+  if (!salt || !hash) return false;
+  const candidate = crypto.scryptSync(password, salt, 64);
+  const expected = Buffer.from(hash, 'hex');
+  return candidate.length === expected.length && crypto.timingSafeEqual(candidate, expected);
+}
+
+function customerSessionToken(customerId, expiresAt) {
+  const payload = `${customerId}:${expiresAt}`;
+  const signature = crypto.createHmac('sha256', customerSessionSecret).update(payload).digest('hex');
+  return `${Buffer.from(payload).toString('base64url')}.${signature}`;
+}
+
+function currentCustomerId(request) {
+  const cookies = getCookies(request);
+  const [encodedPayload, signature] = (cookies[customerSessionCookie] || '').split('.');
+  if (!encodedPayload || !signature) return null;
+  const payload = Buffer.from(encodedPayload, 'base64url').toString('utf8');
+  const expectedSignature = crypto.createHmac('sha256', customerSessionSecret).update(payload).digest('hex');
+  if (signature.length !== expectedSignature.length || !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) return null;
+  const [customerId, expiresAt] = payload.split(':');
+  if (Number(expiresAt) <= Date.now()) return null;
+  return Number(customerId);
+}
+
+function setCustomerSessionCookie(response, customerId) {
+  const expiresAt = Date.now() + customerSessionLifetime;
+  response.set('Set-Cookie', `${customerSessionCookie}=${encodeURIComponent(customerSessionToken(customerId, expiresAt))}; HttpOnly; SameSite=Lax; ${process.env.VERCEL ? 'Secure; ' : ''}Path=/; Max-Age=${customerSessionLifetime / 1000}`);
+}
+
+app.post('/api/account/register', async (request, response) => {
+  const name = String(request.body?.name || '').trim();
+  const email = String(request.body?.email || '').trim().toLowerCase();
+  const phone = request.body?.phone ? String(request.body.phone).trim() : null;
+  const password = String(request.body?.password || '');
+  if (!name || !email || !password) return response.status(400).json({ error: 'Name, email, and password are required.' });
+  if (password.length < 6) return response.status(400).json({ error: 'Password must be at least 6 characters.' });
+  try {
+    const result = await queryWithRetry(
+      'INSERT INTO customers (name, email, phone, password_hash) VALUES ($1,$2,$3,$4) RETURNING id, name, email, phone',
+      [name, email, phone, hashPassword(password)]
+    );
+    const customer = result.rows[0];
+    setCustomerSessionCookie(response, customer.id);
+    response.status(201).json(customer);
+  } catch (error) {
+    if (error.code === '23505') return response.status(409).json({ error: 'An account with that email already exists.' });
+    console.error('Register error:', error);
+    response.status(500).json({ error: 'Could not create your account.' });
+  }
+});
+
+app.post('/api/account/login', async (request, response) => {
+  const email = String(request.body?.email || '').trim().toLowerCase();
+  const password = String(request.body?.password || '');
+  if (!email || !password) return response.status(400).json({ error: 'Email and password are required.' });
+  try {
+    const result = await queryWithRetry('SELECT id, name, email, phone, password_hash FROM customers WHERE email = $1', [email]);
+    const customer = result.rows[0];
+    if (!customer || !verifyPassword(password, customer.password_hash)) return response.status(401).json({ error: 'Invalid email or password.' });
+    setCustomerSessionCookie(response, customer.id);
+    response.json({ id: customer.id, name: customer.name, email: customer.email, phone: customer.phone });
+  } catch (error) {
+    console.error('Login error:', error);
+    response.status(500).json({ error: 'Could not sign you in.' });
+  }
+});
+
+app.post('/api/account/logout', (_request, response) => {
+  response.set('Set-Cookie', `${customerSessionCookie}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
+  response.sendStatus(204);
+});
+
+app.get('/api/account/me', async (request, response) => {
+  const customerId = currentCustomerId(request);
+  if (!customerId) return response.status(401).json({ error: 'Not signed in.' });
+  try {
+    const result = await queryWithRetry('SELECT id, name, email, phone FROM customers WHERE id = $1', [customerId]);
+    if (!result.rowCount) return response.status(401).json({ error: 'Not signed in.' });
+    response.json(result.rows[0]);
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Could not load your account.' });
+  }
+});
+
+app.get('/api/account/orders', async (request, response) => {
+  const customerId = currentCustomerId(request);
+  if (!customerId) return response.status(401).json({ error: 'Not signed in.' });
+  try {
+    const result = await queryWithRetry(
+      'SELECT id, items, subtotal, status, payment_method, created_at FROM orders WHERE customer_id = $1 ORDER BY created_at DESC',
+      [customerId]
+    );
+    response.json({ orders: result.rows });
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Could not load your orders.' });
+  }
+});
+
 app.get('/favicon.ico', (_request, response) => response.sendStatus(204));
 app.use('/admin', requireAdmin);
-app.use('/api', (request, response, next) => (request.path === '/catalog' || request.path.startsWith('/mpesa/') || request.path.startsWith('/card/') || /^\/products\/\d+\/rate$/.test(request.path)) ? next() : requireAdmin(request, response, next));
+app.use('/api', (request, response, next) => (request.path === '/catalog' || request.path.startsWith('/mpesa/') || request.path.startsWith('/card/') || request.path.startsWith('/account/') || /^\/products\/\d+\/rate$/.test(request.path)) ? next() : requireAdmin(request, response, next));
 app.use('/uploads', express.static(uploadDirectory));
 if (process.env.VERCEL) app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use(express.static(__dirname));
@@ -137,6 +261,15 @@ async function initializeDatabase() {
     UPDATE products SET image_path = NULL WHERE image_path = '/uploads/undefined' OR image_path LIKE '%/undefined';
     UPDATE products SET image_path_2 = NULL WHERE image_path_2 LIKE '%/undefined';
     UPDATE products SET image_path_3 = NULL WHERE image_path_3 LIKE '%/undefined';
+    CREATE TABLE IF NOT EXISTS customers (
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      name VARCHAR(150) NOT NULL,
+      email VARCHAR(150) NOT NULL UNIQUE,
+      phone VARCHAR(20),
+      password_hash TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
     CREATE TABLE IF NOT EXISTS orders (
       id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
       customer_name VARCHAR(150) NOT NULL,
@@ -159,6 +292,7 @@ async function initializeDatabase() {
     ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_method VARCHAR(10) NOT NULL DEFAULT 'mpesa';
     ALTER TABLE orders ADD COLUMN IF NOT EXISTS card_last4 VARCHAR(4);
     ALTER TABLE orders ADD COLUMN IF NOT EXISTS card_brand VARCHAR(20);
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_id INTEGER REFERENCES customers(id) ON UPDATE CASCADE ON DELETE SET NULL;
   `);
 }
 
@@ -288,8 +422,8 @@ app.post('/api/mpesa/stkpush', async (request, response) => {
     if (amount < 1) return response.status(400).json({ error: 'Order total must be at least KSh 1.' });
 
     const orderResult = await queryWithRetry(
-      `INSERT INTO orders (customer_name, customer_phone, customer_email, delivery_address, items, subtotal) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-      [name, phone, email, address, JSON.stringify(orderItems), amount]
+      `INSERT INTO orders (customer_id, customer_name, customer_phone, customer_email, delivery_address, items, subtotal) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+      [currentCustomerId(request), name, phone, email, address, JSON.stringify(orderItems), amount]
     );
     const orderId = orderResult.rows[0].id;
 
@@ -438,9 +572,9 @@ app.post('/api/card/charge', async (request, response) => {
     if (amount < 1) return response.status(400).json({ error: 'Order total must be at least KSh 1.' });
 
     const orderResult = await queryWithRetry(
-      `INSERT INTO orders (customer_name, customer_phone, customer_email, delivery_address, items, subtotal, status, payment_method, card_last4, card_brand)
-       VALUES ($1,$2,$3,$4,$5,$6,'paid','card',$7,$8) RETURNING id`,
-      [name, phone, email, address, JSON.stringify(orderItems), amount, cardNumber.slice(-4), detectCardBrand(cardNumber)]
+      `INSERT INTO orders (customer_id, customer_name, customer_phone, customer_email, delivery_address, items, subtotal, status, payment_method, card_last4, card_brand)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,'paid','card',$8,$9) RETURNING id`,
+      [currentCustomerId(request), name, phone, email, address, JSON.stringify(orderItems), amount, cardNumber.slice(-4), detectCardBrand(cardNumber)]
     );
     response.json({ orderId: orderResult.rows[0].id, status: 'paid' });
   } catch (error) {

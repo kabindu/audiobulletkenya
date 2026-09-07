@@ -109,3 +109,20 @@ function productImage(category, alt, src = PRODUCT_IMAGES[category]){
 }
 
 const CART_STORAGE_KEY = 'audiobullet_cart';
+
+/* Lets a guest (no account needed) pick up where they left off:
+   cart already persists via CART_STORAGE_KEY above, and this does the
+   same for the last few products they looked at. */
+const RECENTLY_VIEWED_KEY = 'audiobullet_recently_viewed';
+const RECENTLY_VIEWED_MAX = 10;
+
+function recordRecentlyViewed(productId){
+  const id = String(productId);
+  let ids = getRecentlyViewedIds();
+  ids = [id, ...ids.filter(existing => existing !== id)].slice(0, RECENTLY_VIEWED_MAX);
+  localStorage.setItem(RECENTLY_VIEWED_KEY, JSON.stringify(ids));
+}
+
+function getRecentlyViewedIds(){
+  try { return JSON.parse(localStorage.getItem(RECENTLY_VIEWED_KEY) || '[]'); } catch(error){ return []; }
+}

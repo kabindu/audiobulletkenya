@@ -169,6 +169,7 @@ async function boot(){
 
   document.getElementById('pdWrap').hidden = false;
   document.getElementById('pdMobileBar').hidden = false;
+  recordRecentlyViewed(product.id);
   renderProduct();
 
   document.getElementById('pdPrev').addEventListener('click', ()=> goToImage(-1));
