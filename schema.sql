@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS products (
     image_path VARCHAR(500),
     image_path_2 VARCHAR(500),
     image_path_3 VARCHAR(500),
+    rating_count INTEGER NOT NULL DEFAULT 0 CHECK (rating_count >= 0),
+    rating_sum INTEGER NOT NULL DEFAULT 0 CHECK (rating_sum >= 0),
     status VARCHAR(10) NOT NULL DEFAULT 'in' CHECK (status IN ('in', 'low', 'out')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

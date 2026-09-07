@@ -37,13 +37,59 @@ function goToImage(delta){
   renderGallery();
 }
 
+function updateRatingDisplay(){
+  document.getElementById('pdRating').innerHTML = `<span class="stars">${starsSVG(product.rating || 0, 16)}</span> <span>${product.rating || 0}</span> <span style="color:var(--text-faint)">(${product.reviews || 0} reviews)</span>`;
+}
+
+function renderRateWidget(){
+  const key = `audiobullet_rated_${product.id}`;
+  const already = localStorage.getItem(key);
+  const starsWrap = document.getElementById('pdRateStars');
+  const note = document.getElementById('pdRateNote');
+  if(already){
+    starsWrap.innerHTML = '';
+    note.hidden = false;
+    note.textContent = `You rated this ${already}★. Thanks!`;
+    return;
+  }
+  note.hidden = true;
+  starsWrap.innerHTML = [1,2,3,4,5].map(n => `<button type="button" class="pd-rate-star" data-n="${n}" aria-label="Rate ${n} star${n>1?'s':''}">★</button>`).join('');
+  const starButtons = [...starsWrap.querySelectorAll('.pd-rate-star')];
+  const highlight = n => starButtons.forEach(btn => btn.classList.toggle('active', Number(btn.dataset.n) <= n));
+  starButtons.forEach(btn => {
+    btn.addEventListener('mouseenter', () => highlight(Number(btn.dataset.n)));
+    btn.addEventListener('click', () => submitRating(Number(btn.dataset.n)));
+  });
+  starsWrap.addEventListener('mouseleave', () => highlight(0));
+}
+
+async function submitRating(score){
+  try {
+    const response = await fetch(`/api/products/${product.id}/rate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rating: score }),
+    });
+    const data = await response.json();
+    if(!response.ok) throw new Error(data.error || 'Could not save your rating.');
+    localStorage.setItem(`audiobullet_rated_${product.id}`, String(score));
+    product.rating = data.rating;
+    product.reviews = data.reviews;
+    updateRatingDisplay();
+    renderRateWidget();
+  } catch(error){
+    alert(error.message);
+  }
+}
+
 function renderProduct(){
   const discount = product.originalPrice ? Math.round(100 * (1 - product.price / product.originalPrice)) : null;
   document.title = `${product.name} — AudioBullet Kenya`;
   document.getElementById('pdCrumb').innerHTML = `<a href="home.html">Shop</a> &rsaquo; <span>${product.category_name || product.category}</span> &rsaquo; <span>${product.name}</span>`;
   document.getElementById('pdBrand').textContent = product.brand;
   document.getElementById('pdTitle').textContent = product.name;
-  document.getElementById('pdRating').innerHTML = `<span class="stars">${starsSVG(product.rating || 0, 16)}</span> <span>${product.rating || 0}</span> <span style="color:var(--text-faint)">(${product.reviews || 0} reviews)</span>`;
+  updateRatingDisplay();
+  renderRateWidget();
   document.getElementById('pdPriceRow').innerHTML = `
     <span class="pd-price">${fmt(product.price)}</span>
     ${product.originalPrice ? `<span class="pd-price-old">${fmt(product.originalPrice)}</span>` : ''}

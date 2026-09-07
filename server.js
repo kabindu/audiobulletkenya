@@ -93,7 +93,7 @@ app.post('/admin/logout', requireAdmin, (_request, response) => {
 });
 app.get('/favicon.ico', (_request, response) => response.sendStatus(204));
 app.use('/admin', requireAdmin);
-app.use('/api', (request, response, next) => (request.path === '/catalog' || request.path.startsWith('/mpesa/') || request.path.startsWith('/card/')) ? next() : requireAdmin(request, response, next));
+app.use('/api', (request, response, next) => (request.path === '/catalog' || request.path.startsWith('/mpesa/') || request.path.startsWith('/card/') || /^\/products\/\d+\/rate$/.test(request.path)) ? next() : requireAdmin(request, response, next));
 app.use('/uploads', express.static(uploadDirectory));
 if (process.env.VERCEL) app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use(express.static(__dirname));
@@ -132,6 +132,8 @@ async function initializeDatabase() {
     ALTER TABLE products ALTER COLUMN image_path TYPE TEXT;
     ALTER TABLE products ADD COLUMN IF NOT EXISTS image_path_2 TEXT;
     ALTER TABLE products ADD COLUMN IF NOT EXISTS image_path_3 TEXT;
+    ALTER TABLE products ADD COLUMN IF NOT EXISTS rating_count INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE products ADD COLUMN IF NOT EXISTS rating_sum INTEGER NOT NULL DEFAULT 0;
     UPDATE products SET image_path = NULL WHERE image_path = '/uploads/undefined' OR image_path LIKE '%/undefined';
     UPDATE products SET image_path_2 = NULL WHERE image_path_2 LIKE '%/undefined';
     UPDATE products SET image_path_3 = NULL WHERE image_path_3 LIKE '%/undefined';
@@ -206,12 +208,31 @@ app.get('/api/catalog', async (_request, response) => {
         CASE WHEN p.image_path LIKE '%/undefined' THEN NULL ELSE p.image_path END AS image,
         CASE WHEN p.image_path_2 LIKE '%/undefined' THEN NULL ELSE p.image_path_2 END AS image2,
         CASE WHEN p.image_path_3 LIKE '%/undefined' THEN NULL ELSE p.image_path_3 END AS image3,
+        p.rating_count AS reviews,
+        CASE WHEN p.rating_count > 0 THEN ROUND(p.rating_sum::numeric / p.rating_count, 1) ELSE 0 END AS rating,
         p.status FROM products p JOIN categories c ON c.id = p.category_id JOIN brands b ON b.id = p.brand_id ORDER BY p.id DESC`),
     ]);
     response.json({ categories: categories.rows, brands: brands.rows, products: products.rows });
   } catch (error) {
     console.error(error);
     response.status(500).json({ error: 'Could not load catalog data.' });
+  }
+});
+
+app.post('/api/products/:id/rate', async (request, response) => {
+  const rating = Number(request.body?.rating);
+  if (!Number.isInteger(rating) || rating < 1 || rating > 5) return response.status(400).json({ error: 'Rating must be a whole number from 1 to 5.' });
+  try {
+    const result = await queryWithRetry(
+      `UPDATE products SET rating_count = rating_count + 1, rating_sum = rating_sum + $2, updated_at = NOW() WHERE id = $1 RETURNING rating_count, rating_sum`,
+      [request.params.id, rating]
+    );
+    if (!result.rowCount) return response.status(404).json({ error: 'Product not found.' });
+    const { rating_count: reviews, rating_sum: sum } = result.rows[0];
+    response.json({ reviews, rating: Math.round((sum / reviews) * 10) / 10 });
+  } catch (error) {
+    console.error('Rating error:', error);
+    response.status(500).json({ error: 'Could not save your rating.' });
   }
 });
 
