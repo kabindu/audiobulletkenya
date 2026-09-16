@@ -51,7 +51,8 @@ async function loadStorefrontCatalog(){
       spec: product.spec || '',
       originalPrice: product.originalPrice ? Number(product.originalPrice) : null,
       badge: product.badge || null,
-      stock: product.status,
+      status: product.status,
+      stockQty: Number(product.stock) || 0,
       newArrival: false,
       image: product.image || imageForProduct(category, product.name),
       categoryId: product.category_id,
@@ -355,6 +356,8 @@ function getFiltered(){
 function productCard(pr){
   const discount = pr.originalPrice ? Math.round(100*(1-pr.price/pr.originalPrice)) : null;
   const inCart = !!cart[pr.id];
+  const outOfStock = pr.status === 'out';
+  const atStockCap = typeof pr.stockQty === 'number' && pr.stockQty > 0 && (cart[pr.id]||0) >= pr.stockQty;
   return `<article class="card" data-id="${pr.id}">
     <div class="card-media">
       ${pr.badge ? `<span class="card-badge ${pr.badge==='Best Seller'?'':''}">${pr.badge}</span>` : (pr.newArrival ? `<span class="card-badge sale">New</span>` : '')}
@@ -370,9 +373,9 @@ function productCard(pr){
         <span class="card-price">${fmt(pr.price)}</span>
         ${pr.originalPrice ? `<span class="card-price-old">${fmt(pr.originalPrice)}</span>` : ''}
       </div>
-      <span class="card-stock">In stock</span>
+      <span class="card-stock ${outOfStock?'low':''}">${outOfStock ? 'Out of stock' : 'In stock'}</span>
       <div class="card-actions">
-        <button class="add-btn ${inCart?'added':''}" data-id="${pr.id}">${inCart? 'Added &#10003;' : 'Add to Cart'}</button>
+        <button class="add-btn ${inCart?'added':''}" data-id="${pr.id}" ${outOfStock || atStockCap ? 'disabled' : ''}>${outOfStock ? 'Out of stock' : (inCart? 'Added &#10003;' : 'Add to Cart')}</button>
         <a class="quote-btn whatsapp-btn" href="${whatsappOrderUrl(pr.name)}" target="_blank" rel="noopener" title="Order via WhatsApp" aria-label="Order via WhatsApp">${WHATSAPP_ICON_SVG}</a>
       </div>
     </div>
@@ -419,8 +422,15 @@ function bumpCartBadge(){
   void badge.offsetWidth; // restart the animation even if it's already mid-bump
   badge.classList.add('bump');
 }
+function withinStock(pr, nextQty){
+  return !(typeof pr?.stockQty === 'number' && pr.stockQty > 0 && nextQty > pr.stockQty);
+}
 function addToCart(id){
-  cart[id] = (cart[id]||0) + 1;
+  const pr = PRODUCTS.find(p=>p.id===id);
+  if(pr?.status === 'out') return;
+  const nextQty = (cart[id]||0) + 1;
+  if(!withinStock(pr, nextQty)) return;
+  cart[id] = nextQty;
   updateCartUI();
   bumpCartBadge();
   renderProducts();
@@ -428,6 +438,7 @@ function addToCart(id){
 }
 function changeQty(id, delta){
   if(!cart[id]) return;
+  if(delta > 0 && !withinStock(PRODUCTS.find(p=>p.id===id), cart[id] + delta)) return;
   cart[id] += delta;
   if(cart[id] <= 0) delete cart[id];
   updateCartUI();
@@ -479,6 +490,7 @@ function updateCartUI(){
     const pr = PRODUCTS.find(x=>x.id===id);
     const qty = cart[id];
     subtotal += pr.price*qty;
+    const atCap = !withinStock(pr, qty + 1);
     return `<div class="cart-item">
       <div class="cart-item-media">${productImage(pr.category, pr.name, pr.image)}</div>
       <div class="cart-item-info">
@@ -487,9 +499,10 @@ function updateCartUI(){
         <div class="qty-row">
           <button class="qty-btn" data-act="dec" data-id="${id}">&minus;</button>
           <span class="qty-num">${qty}</span>
-          <button class="qty-btn" data-act="inc" data-id="${id}">+</button>
+          <button class="qty-btn" data-act="inc" data-id="${id}" ${atCap?'disabled':''}>+</button>
           <span class="remove-btn" data-act="rm" data-id="${id}" style="margin-left:auto;cursor:pointer;">Remove</span>
         </div>
+        ${atCap ? `<span class="cart-stock-note">Max available stock reached</span>` : ''}
       </div>
       <div class="cart-item-price">${fmt(pr.price*qty)}</div>
     </div>`;
@@ -592,7 +605,19 @@ async function updateAccountLabel(){
     const customer = await response.json();
     label.textContent = customer.name.split(' ')[0];
     currentCustomer = customer;
-    if(Object.keys(cart).length) syncCartToServer();
+    if(Object.keys(cart).length){
+      syncCartToServer();
+    } else if(Array.isArray(customer.cart) && customer.cart.length){
+      // Nothing in this device's cart yet — pick up whatever they had synced from another device.
+      customer.cart.forEach(item => {
+        const id = String(item.productId);
+        if(PRODUCTS.some(p=>p.id===id)) cart[id] = Math.max(1, Number(item.qty)||1);
+      });
+      if(Object.keys(cart).length){
+        updateCartUI();
+        renderProducts();
+      }
+    }
   } catch(error) { /* stay signed out visually — not worth surfacing */ }
 }
 

@@ -194,7 +194,7 @@ app.get('/api/account/me', async (request, response) => {
   const customerId = currentCustomerId(request);
   if (!customerId) return response.status(401).json({ error: 'Not signed in.' });
   try {
-    const result = await queryWithRetry('SELECT id, name, email, phone FROM customers WHERE id = $1', [customerId]);
+    const result = await queryWithRetry('SELECT id, name, email, phone, cart FROM customers WHERE id = $1', [customerId]);
     if (!result.rowCount) return response.status(401).json({ error: 'Not signed in.' });
     response.json(result.rows[0]);
   } catch (error) {
@@ -413,6 +413,22 @@ app.get('/api/customers', async (_request, response) => {
   }
 });
 
+/* Admin-only: every order placed, newest first, so admin can actually see
+   what's been bought (the catalog/checkout side has worked all along -
+   nothing surfaced it in the dashboard). */
+app.get('/api/orders', async (_request, response) => {
+  try {
+    const result = await queryWithRetry(
+      `SELECT id, customer_id, customer_name, customer_phone, customer_email, delivery_address, items, subtotal, status, payment_method, card_last4, card_brand, created_at
+       FROM orders ORDER BY created_at DESC LIMIT 300`
+    );
+    response.json({ orders: result.rows });
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Could not load orders.' });
+  }
+});
+
 /* Storefront list view (shop grid, cart, checkout summary): drops description
    and the 2nd/3rd product images, which are only ever shown on the single
    product page, so the grid isn't downloading every product's full photo set
@@ -485,6 +501,46 @@ function normalizeMpesaPhone(raw) {
   return null;
 }
 
+/* Re-checks price AND current stock against the database at checkout time -
+   a customer's local cart can go stale (another buyer took the last unit,
+   admin marked something out of stock) since nothing re-validates it
+   between adding to cart and paying. */
+async function priceAndCheckStock(items) {
+  const ids = items.map(item => Number(item.productId)).filter(Boolean);
+  const priced = await queryWithRetry('SELECT id, name, price, stock_quantity, status FROM products WHERE id = ANY($1)', [ids]);
+  const productMap = new Map(priced.rows.map(row => [row.id, row]));
+  let subtotal = 0;
+  const orderItems = items.map(item => {
+    const id = Number(item.productId);
+    const qty = Math.max(1, Number(item.qty) || 1);
+    const product = productMap.get(id);
+    if (!product) throw new Error('One or more cart items are no longer available.');
+    if (product.status === 'out' || product.stock_quantity <= 0) throw new Error(`${product.name} just sold out - remove it from your cart to continue.`);
+    if (qty > product.stock_quantity) throw new Error(`Only ${product.stock_quantity} of ${product.name} left in stock - adjust the quantity in your cart.`);
+    const price = Number(product.price);
+    subtotal += price * qty;
+    return { productId: id, qty, price };
+  });
+  return { orderItems, subtotal };
+}
+
+/* Only called once a payment is actually confirmed (card charge is
+   synchronous "paid"; M-Pesa only once the callback reports success) -
+   never at order-creation time, so a cancelled or failed payment never
+   reduces stock. */
+async function decrementStock(orderItems) {
+  for (const item of orderItems || []) {
+    await queryWithRetry(
+      `UPDATE products SET
+         stock_quantity = GREATEST(stock_quantity - $2, 0),
+         status = CASE WHEN stock_quantity - $2 <= 0 THEN 'out' WHEN stock_quantity - $2 <= 5 THEN 'low' ELSE 'in' END,
+         updated_at = NOW()
+       WHERE id = $1`,
+      [item.productId, item.qty]
+    );
+  }
+}
+
 async function getMpesaAccessToken() {
   const auth = Buffer.from(`${process.env.MPESA_CONSUMER_KEY}:${process.env.MPESA_CONSUMER_SECRET}`).toString('base64');
   const response = await fetch(`${mpesaBaseUrl}/oauth/v1/generate?grant_type=client_credentials`, {
@@ -508,18 +564,7 @@ app.post('/api/mpesa/stkpush', async (request, response) => {
   if (!process.env.MPESA_CONSUMER_KEY || !process.env.MPESA_CONSUMER_SECRET) return response.status(503).json({ error: 'M-Pesa payments are not configured yet.' });
 
   try {
-    const ids = items.map(item => Number(item.productId)).filter(Boolean);
-    const priced = await queryWithRetry('SELECT id, price FROM products WHERE id = ANY($1)', [ids]);
-    const priceMap = new Map(priced.rows.map(row => [row.id, Number(row.price)]));
-    let subtotal = 0;
-    const orderItems = items.map(item => {
-      const id = Number(item.productId);
-      const qty = Math.max(1, Number(item.qty) || 1);
-      const price = priceMap.get(id);
-      if (price == null) throw new Error('One or more cart items are no longer available.');
-      subtotal += price * qty;
-      return { productId: id, qty, price };
-    });
+    const { orderItems, subtotal } = await priceAndCheckStock(items);
     const amount = Math.round(subtotal);
     if (amount < 1) return response.status(400).json({ error: 'Order total must be at least KSh 1.' });
 
@@ -575,12 +620,13 @@ app.post('/api/mpesa/callback', async (request, response) => {
     if (!callback) return response.json({ ResultCode: 0, ResultDesc: 'Accepted' });
     const { CheckoutRequestID, ResultCode, ResultDesc, CallbackMetadata } = callback;
     if (ResultCode === 0) {
-      const items = CallbackMetadata?.Item || [];
-      const receipt = items.find(item => item.Name === 'MpesaReceiptNumber')?.Value || null;
-      await queryWithRetry(
-        `UPDATE orders SET status = 'paid', mpesa_receipt = $2, result_desc = $3, updated_at = NOW() WHERE checkout_request_id = $1`,
+      const metaItems = CallbackMetadata?.Item || [];
+      const receipt = metaItems.find(item => item.Name === 'MpesaReceiptNumber')?.Value || null;
+      const updated = await queryWithRetry(
+        `UPDATE orders SET status = 'paid', mpesa_receipt = $2, result_desc = $3, updated_at = NOW() WHERE checkout_request_id = $1 RETURNING items`,
         [CheckoutRequestID, receipt, ResultDesc]
       );
+      if (updated.rowCount) await decrementStock(updated.rows[0].items);
     } else {
       await queryWithRetry(
         `UPDATE orders SET status = 'failed', result_desc = $2, updated_at = NOW() WHERE checkout_request_id = $1`,
@@ -659,18 +705,7 @@ app.post('/api/card/charge', async (request, response) => {
   if (Number(expiryMatch[1]) < 1 || Number(expiryMatch[1]) > 12 || expiryDate < new Date()) return response.status(400).json({ error: 'This card has expired.' });
 
   try {
-    const ids = items.map(item => Number(item.productId)).filter(Boolean);
-    const priced = await queryWithRetry('SELECT id, price FROM products WHERE id = ANY($1)', [ids]);
-    const priceMap = new Map(priced.rows.map(row => [row.id, Number(row.price)]));
-    let subtotal = 0;
-    const orderItems = items.map(item => {
-      const id = Number(item.productId);
-      const qty = Math.max(1, Number(item.qty) || 1);
-      const price = priceMap.get(id);
-      if (price == null) throw new Error('One or more cart items are no longer available.');
-      subtotal += price * qty;
-      return { productId: id, qty, price };
-    });
+    const { orderItems, subtotal } = await priceAndCheckStock(items);
     const amount = Math.round(subtotal);
     if (amount < 1) return response.status(400).json({ error: 'Order total must be at least KSh 1.' });
 
@@ -679,6 +714,7 @@ app.post('/api/card/charge', async (request, response) => {
        VALUES ($1,$2,$3,$4,$5,$6,$7,'paid','card',$8,$9) RETURNING id`,
       [currentCustomerId(request), name, phone, email, address, JSON.stringify(orderItems), amount, cardNumber.slice(-4), detectCardBrand(cardNumber)]
     );
+    await decrementStock(orderItems);
     await saveCustomerCart(currentCustomerId(request), []);
     response.json({ orderId: orderResult.rows[0].id, status: 'paid' });
   } catch (error) {

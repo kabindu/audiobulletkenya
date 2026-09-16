@@ -1,6 +1,7 @@
 const $ = selector => document.querySelector(selector);
 const kes = value => `KSh ${Number(value).toLocaleString('en-KE')}`;
-const state = { categories: [], brands: [], products: [], customers: [], entityType: 'category', editingEntityId: null, editingProductId: null };
+const state = { categories: [], brands: [], products: [], customers: [], orders: [], entityType: 'category', editingEntityId: null, editingProductId: null };
+const ORDER_STATUS_PILL = { paid: 'in', pending: 'low', failed: 'out', cancelled: 'out' };
 
 async function request(url, options = {}) {
   const response = await fetch(url, options);
@@ -67,6 +68,47 @@ function renderCustomers() {
     </tr>`;
   }).join('');
   $('#customerCount').textContent = state.customers.length;
+}
+
+async function loadOrders() {
+  const data = await request('/api/orders');
+  state.orders = data.orders;
+  $('#metricOrders').textContent = state.orders.filter(order => order.status === 'pending' || order.status === 'paid').length;
+  renderOrders();
+}
+
+function renderOrders() {
+  const query = ($('#orderSearch')?.value || '').toLowerCase();
+  const statusFilter = $('#orderStatusFilter')?.value || 'all';
+  const orders = state.orders.filter(order => {
+    const matchesQuery = [order.customer_name, order.customer_phone, String(order.id)].some(value => String(value || '').toLowerCase().includes(query));
+    return matchesQuery && (statusFilter === 'all' || order.status === statusFilter);
+  });
+  $('#orderRows').innerHTML = orders.map(order => {
+    const items = (order.items || []).map(entry => {
+      const product = state.products.find(item => item.id === Number(entry.productId));
+      return { name: product ? product.name : `Product #${entry.productId}`, qty: entry.qty };
+    });
+    const itemsSummary = items.map(item => `${item.qty}× ${item.name}`).join(', ');
+    const waDigits = (order.customer_phone || '').replace(/\D/g, '');
+    const waMessage = `Hello ${(order.customer_name || '').split(' ')[0]}, this is AudioBullet Kenya following up on order #${order.id} (${kes(order.subtotal)}).`;
+    const waHref = waDigits ? `https://wa.me/${waDigits}?text=${encodeURIComponent(waMessage)}` : '';
+    const date = new Date(order.created_at).toLocaleString('en-KE', { dateStyle: 'medium', timeStyle: 'short' });
+    const payment = order.payment_method === 'card'
+      ? `Card${order.card_brand ? ` · ${order.card_brand}` : ''}${order.card_last4 ? ` ••${order.card_last4}` : ''}`
+      : 'M-Pesa';
+    return `<tr>
+      <td><strong>#${order.id}</strong></td>
+      <td><div class="product-name"><strong>${order.customer_name}</strong><small>${order.customer_phone}</small></div></td>
+      <td><span title="${itemsSummary}">${items.length} item${items.length === 1 ? '' : 's'}</span></td>
+      <td class="price-cell">${kes(order.subtotal)}</td>
+      <td><span class="category-pill">${payment}</span></td>
+      <td><span class="stock-pill ${ORDER_STATUS_PILL[order.status] || 'low'}">${order.status}</span></td>
+      <td>${date}</td>
+      <td><div class="row-actions">${waHref ? `<a href="${waHref}" target="_blank" rel="noopener" title="Message on WhatsApp">💬</a>` : ''}</div></td>
+    </tr>`;
+  }).join('');
+  $('#orderCount').textContent = orders.length;
 }
 
 function setView(view) {
@@ -182,6 +224,8 @@ $('#entityModal').addEventListener('click', event => { if (event.target.id === '
 $('#productSearch').addEventListener('input', renderProducts);
 $('#categoryFilter').addEventListener('change', renderProducts);
 $('#stockFilter').addEventListener('change', renderProducts);
+$('#orderSearch').addEventListener('input', renderOrders);
+$('#orderStatusFilter').addEventListener('change', renderOrders);
 $('#mobileMenu').addEventListener('click', () => $('#sidebar').classList.toggle('open'));
 $('#productForm [name="image"]').addEventListener('change', event => readImage(event.target, $('#productImagePreview')));
 $('#productForm [name="image2"]').addEventListener('change', event => readImage(event.target, $('#productImagePreview2')));
@@ -220,5 +264,8 @@ $('#productForm').addEventListener('submit', async event => {
 });
 
 loadCatalog()
-  .then(() => loadCustomers().catch(error => console.error('Could not load customers:', error)))
+  .then(() => Promise.all([
+    loadCustomers().catch(error => console.error('Could not load customers:', error)),
+    loadOrders().catch(error => console.error('Could not load orders:', error)),
+  ]))
   .catch(error => alert(`Could not connect to the catalog database: ${error.message}`));
