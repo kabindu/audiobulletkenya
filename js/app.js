@@ -342,7 +342,7 @@ function productCard(pr){
       <span class="card-stock">In stock &middot; ships in 2&ndash;4 days</span>
       <div class="card-actions">
         <button class="add-btn ${inCart?'added':''}" data-id="${pr.id}">${inCart? 'Added &#10003;' : 'Add to Cart'}</button>
-        <button class="quote-btn" title="Request bulk quote">Quote</button>
+        <a class="quote-btn whatsapp-btn" href="${whatsappOrderUrl(pr.name)}" target="_blank" rel="noopener" title="Order via WhatsApp" aria-label="Order via WhatsApp">${WHATSAPP_ICON_SVG}</a>
       </div>
     </div>
   </article>`;
@@ -363,7 +363,7 @@ function renderProducts(){
   grid.querySelectorAll('.add-btn').forEach(btn=>{
     btn.addEventListener('click', e=>{ e.stopPropagation(); addToCart(btn.dataset.id); });
   });
-  grid.querySelectorAll('.quote-btn').forEach(btn=>{
+  grid.querySelectorAll('.whatsapp-btn').forEach(btn=>{
     btn.addEventListener('click', e=> e.stopPropagation());
   });
   grid.querySelectorAll('.card').forEach(card=>{

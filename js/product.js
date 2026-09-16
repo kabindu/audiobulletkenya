@@ -107,6 +107,8 @@ function renderProduct(){
   document.getElementById('pdDescription').innerHTML = (product.description || 'No description provided for this product yet.')
     .split(/\n+/).filter(Boolean).map(paragraph => `<p>${paragraph}</p>`).join('');
 
+  document.getElementById('pdQuoteBtn').href = whatsappOrderUrl(product.name);
+
   galleryImages = imagesForProduct(product);
   activeImageIndex = 0;
   renderGallery();
@@ -178,7 +180,6 @@ async function boot(){
   document.getElementById('pdQtyInc').addEventListener('click', ()=> setQty(qty + 1));
   document.getElementById('pdAddBtn').addEventListener('click', addCurrentToCart);
   document.getElementById('pdMobileAddBtn').addEventListener('click', addCurrentToCart);
-  document.getElementById('pdQuoteBtn').addEventListener('click', ()=> alert('Bulk quote requests are coming soon — reach us via WhatsApp for now.'));
 
   let touchStartX = null;
   const media = document.getElementById('pdMainMedia');
