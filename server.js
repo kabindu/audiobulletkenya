@@ -215,7 +215,7 @@ app.get('/api/account/orders', async (request, response) => {
   }
 });
 
-app.get('/favicon.ico', (_request, response) => response.sendStatus(204));
+app.get('/favicon.ico', (_request, response) => response.sendFile(path.join(__dirname, 'images', 'logo.jpeg')));
 app.use('/admin', requireAdmin);
 app.use('/api', (request, response, next) => (request.path === '/catalog' || request.path.startsWith('/mpesa/') || request.path.startsWith('/card/') || request.path.startsWith('/account/') || /^\/products\/\d+\/rate$/.test(request.path)) ? next() : requireAdmin(request, response, next));
 app.use('/uploads', express.static(uploadDirectory));
