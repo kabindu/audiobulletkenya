@@ -100,7 +100,7 @@ function renderProduct(){
   const stockOut = product.status === 'out';
   document.getElementById('pdStock').innerHTML = stockOut
     ? `<span class="card-stock low">Out of stock</span>`
-    : `<span class="card-stock">In stock &middot; ships in 2&ndash;4 days</span>`;
+    : `<span class="card-stock">In stock</span>`;
   document.getElementById('pdAddBtn').disabled = stockOut;
   document.getElementById('pdMobileAddBtn').disabled = stockOut;
   document.getElementById('pdMobilePrice').textContent = fmt(product.price);

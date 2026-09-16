@@ -339,7 +339,7 @@ function productCard(pr){
         <span class="card-price">${fmt(pr.price)}</span>
         ${pr.originalPrice ? `<span class="card-price-old">${fmt(pr.originalPrice)}</span>` : ''}
       </div>
-      <span class="card-stock">In stock &middot; ships in 2&ndash;4 days</span>
+      <span class="card-stock">In stock</span>
       <div class="card-actions">
         <button class="add-btn ${inCart?'added':''}" data-id="${pr.id}">${inCart? 'Added &#10003;' : 'Add to Cart'}</button>
         <a class="quote-btn whatsapp-btn" href="${whatsappOrderUrl(pr.name)}" target="_blank" rel="noopener" title="Order via WhatsApp" aria-label="Order via WhatsApp">${WHATSAPP_ICON_SVG}</a>
