@@ -259,7 +259,7 @@ async function boot(){
     return;
   }
   try {
-    const response = await fetch('/api/catalog');
+    const response = await fetch('/api/catalog/light');
     const catalog = await response.json();
     products = catalog.products.map(product => ({
       id: product.id,

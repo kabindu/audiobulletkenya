@@ -217,7 +217,7 @@ app.get('/api/account/orders', async (request, response) => {
 
 app.get('/favicon.ico', (_request, response) => response.sendFile(path.join(__dirname, 'images', 'logo.jpeg')));
 app.use('/admin', requireAdmin);
-app.use('/api', (request, response, next) => (request.path === '/catalog' || request.path.startsWith('/mpesa/') || request.path.startsWith('/card/') || request.path.startsWith('/account/') || /^\/products\/\d+\/rate$/.test(request.path)) ? next() : requireAdmin(request, response, next));
+app.use('/api', (request, response, next) => (request.path === '/catalog' || request.path === '/catalog/light' || request.path.startsWith('/mpesa/') || request.path.startsWith('/card/') || request.path.startsWith('/account/') || /^\/products\/\d+\/rate$/.test(request.path) || (request.method === 'GET' && /^\/products\/\d+$/.test(request.path))) ? next() : requireAdmin(request, response, next));
 app.use('/uploads', express.static(uploadDirectory));
 if (process.env.VERCEL) app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use(express.static(__dirname));
@@ -350,6 +350,47 @@ app.get('/api/catalog', async (_request, response) => {
   } catch (error) {
     console.error(error);
     response.status(500).json({ error: 'Could not load catalog data.' });
+  }
+});
+
+/* Storefront list view (shop grid, cart, checkout summary): drops description
+   and the 2nd/3rd product images, which are only ever shown on the single
+   product page, so the grid isn't downloading every product's full photo set
+   just to render a thumbnail. */
+app.get('/api/catalog/light', async (_request, response) => {
+  try {
+    const [categories, brands, products] = await Promise.all([
+      queryWithRetry('SELECT id, name FROM categories ORDER BY name'),
+      queryWithRetry(`SELECT b.id, b.name, b.category_id, c.name AS category_name FROM brands b JOIN categories c ON c.id = b.category_id ORDER BY b.name`),
+      queryWithRetry(`SELECT p.id, p.name, p.category_id, c.name AS category, p.brand_id, b.name AS brand, p.price, p.original_price AS "originalPrice", p.stock_quantity AS stock, p.badge, p.specifications AS spec,
+        CASE WHEN p.image_path LIKE '%/undefined' THEN NULL ELSE p.image_path END AS image,
+        p.rating_count AS reviews,
+        CASE WHEN p.rating_count > 0 THEN ROUND(p.rating_sum::numeric / p.rating_count, 1) ELSE 0 END AS rating,
+        p.status FROM products p JOIN categories c ON c.id = p.category_id JOIN brands b ON b.id = p.brand_id ORDER BY p.id DESC`),
+    ]);
+    response.json({ categories: categories.rows, brands: brands.rows, products: products.rows });
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Could not load catalog data.' });
+  }
+});
+
+/* Single product (product detail page): avoids pulling every other
+   product's data and images just to show one item. */
+app.get('/api/products/:id', async (request, response) => {
+  try {
+    const result = await queryWithRetry(`SELECT p.id, p.name, p.category_id, c.name AS category, p.brand_id, b.name AS brand, p.price, p.original_price AS "originalPrice", p.stock_quantity AS stock, p.badge, p.specifications AS spec, p.description,
+      CASE WHEN p.image_path LIKE '%/undefined' THEN NULL ELSE p.image_path END AS image,
+      CASE WHEN p.image_path_2 LIKE '%/undefined' THEN NULL ELSE p.image_path_2 END AS image2,
+      CASE WHEN p.image_path_3 LIKE '%/undefined' THEN NULL ELSE p.image_path_3 END AS image3,
+      p.rating_count AS reviews,
+      CASE WHEN p.rating_count > 0 THEN ROUND(p.rating_sum::numeric / p.rating_count, 1) ELSE 0 END AS rating,
+      p.status FROM products p JOIN categories c ON c.id = p.category_id JOIN brands b ON b.id = p.brand_id WHERE p.id = $1`, [request.params.id]);
+    if (!result.rowCount) return response.status(404).json({ error: 'Product not found.' });
+    response.json(result.rows[0]);
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Could not load product.' });
   }
 });
 

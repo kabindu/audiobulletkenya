@@ -21,7 +21,7 @@ function renderSkeletonGrid(count = 9){
 }
 
 async function loadStorefrontCatalog(){
-  const response = await fetch('/api/catalog');
+  const response = await fetch('/api/catalog/light');
   if(!response.ok) throw new Error('Could not load the catalog.');
   const catalog = await response.json();
   const categoryMap = new Map(catalog.categories.map(category => [category.id, storefrontCategoryId(category.name)]));
@@ -54,7 +54,6 @@ async function loadStorefrontCatalog(){
       stock: product.status,
       newArrival: false,
       image: product.image || imageForProduct(category, product.name),
-      images: imagesForProduct({ category, image: product.image, image2: product.image2, image3: product.image3 }),
       categoryId: product.category_id,
       brandId: product.brand_id,
     };
@@ -95,7 +94,6 @@ function p(name,category,brand,price,rating,reviews,spec,opts={}){
     stock: opts.stock || 'in',
     newArrival: opts.newArrival || false,
     image: opts.image || imageForProduct(category, name),
-    images: imagesForProduct({ category, image: opts.image }),
   };
 }
 

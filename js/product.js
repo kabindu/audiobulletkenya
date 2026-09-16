@@ -136,25 +136,23 @@ async function boot(){
   const id = new URLSearchParams(window.location.search).get('id');
   saveCart();
   try {
-    const response = await fetch('/api/catalog');
-    const catalog = await response.json();
-    const categoryNames = new Map(catalog.categories.map(c => [c.id, c.name]));
-    const found = catalog.products.find(p => String(p.id) === String(id));
-    if(found){
-      const category = storefrontCategoryId(categoryNames.get(found.category_id) || found.category || 'equipment');
+    const response = await fetch(`/api/products/${encodeURIComponent(id)}`);
+    if(response.ok){
+      const found = await response.json();
+      const category = storefrontCategoryId(found.category || 'equipment');
       product = {
         id: found.id,
         name: found.name,
         brand: found.brand,
         category,
-        category_name: categoryNames.get(found.category_id) || found.category,
+        category_name: found.category,
         price: Number(found.price),
         originalPrice: found.originalPrice ? Number(found.originalPrice) : null,
         spec: found.spec || '',
         description: found.description || '',
         status: found.status,
-        rating: 0,
-        reviews: 0,
+        rating: Number(found.rating) || 0,
+        reviews: Number(found.reviews) || 0,
         image: found.image,
         image2: found.image2,
         image3: found.image3,
