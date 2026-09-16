@@ -1,18 +1,22 @@
 /* One-off migration: moves product images stored as base64 data URIs
-   directly in the database over to Vercel Blob storage, replacing each
-   data: URI column with the resulting https:// blob URL. Run manually:
+   directly in the database out to real files under images/products/,
+   replacing each data: URI column with a plain /images/products/... URL.
+   Run manually:
 
-     node scripts/migrate-images-to-blob.js [--dry-run]
+     node scripts/migrate-images-to-files.js [--dry-run]
 
-   Requires BLOB_READ_WRITE_TOKEN and DATABASE_URL to be set (.env is
-   loaded automatically). --dry-run reports what would change without
-   writing anything. Safe to re-run: only touches columns that still
-   start with "data:". */
+   Requires DATABASE_URL (.env is loaded automatically). --dry-run
+   reports what would change without writing anything. Safe to re-run:
+   only touches columns that still start with "data:", and file names
+   are deterministic (id + column) so re-running overwrites in place
+   rather than piling up duplicates. */
 require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
 const { Pool } = require('pg');
-const { put } = require('@vercel/blob');
 
 const dryRun = process.argv.includes('--dry-run');
+const outputDir = path.join(__dirname, '..', 'images', 'products');
 
 const EXTENSION_BY_MIME = {
   'image/webp': 'webp',
@@ -30,28 +34,22 @@ function parseDataUri(value) {
   return { mimeType, buffer: Buffer.from(base64, 'base64') };
 }
 
-async function migrateColumn(pool, productId, columnLabel, columnSql, value, stats) {
+function migrateColumn(productId, columnLabel, columnSql, value, stats) {
   const parsed = parseDataUri(value);
   if (!parsed) return null;
   const ext = EXTENSION_BY_MIME[parsed.mimeType] || 'bin';
   const beforeKb = Math.round(value.length / 1024);
-  console.log(`Product ${productId} ${columnLabel}: ${beforeKb}KB base64 -> uploading (${parsed.mimeType})`);
+  const filename = `${productId}-${columnLabel}.${ext}`;
+  console.log(`Product ${productId} ${columnLabel}: ${beforeKb}KB base64 -> images/products/${filename} (${parsed.mimeType})`);
   stats.bytesBefore += value.length;
   if (dryRun) return null;
-  const blob = await put(`products/${productId}-${columnLabel}-${Date.now()}.${ext}`, parsed.buffer, {
-    access: 'public',
-    addRandomSuffix: true,
-    contentType: parsed.mimeType,
-  });
-  console.log(`  -> ${blob.url}`);
-  return { columnSql, url: blob.url };
+  fs.writeFileSync(path.join(outputDir, filename), parsed.buffer);
+  return { columnSql, url: `/images/products/${filename}` };
 }
 
 async function main() {
-  if (!process.env.BLOB_READ_WRITE_TOKEN) {
-    console.error('BLOB_READ_WRITE_TOKEN is not set. Add it to .env (from your Vercel Blob store) before running this.');
-    process.exit(1);
-  }
+  if (!dryRun) fs.mkdirSync(outputDir, { recursive: true });
+
   const pool = new Pool(process.env.DATABASE_URL ? {
     connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false },
@@ -70,15 +68,14 @@ async function main() {
     for (const row of rows) {
       const updates = [];
       try {
-        const results = await Promise.all([
-          migrateColumn(pool, row.id, 'image_path', 'image_path', row.image_path, stats),
-          migrateColumn(pool, row.id, 'image_path_2', 'image_path_2', row.image_path_2, stats),
-          migrateColumn(pool, row.id, 'image_path_3', 'image_path_3', row.image_path_3, stats),
-        ]);
-        for (const result of results) if (result) updates.push(result);
+        for (const result of [
+          migrateColumn(row.id, 'image_path', 'image_path', row.image_path, stats),
+          migrateColumn(row.id, 'image_path_2', 'image_path_2', row.image_path_2, stats),
+          migrateColumn(row.id, 'image_path_3', 'image_path_3', row.image_path_3, stats),
+        ]) if (result) updates.push(result);
       } catch (error) {
         stats.errors += 1;
-        console.error(`Product ${row.id}: upload failed - ${error.message}`);
+        console.error(`Product ${row.id}: write failed - ${error.message}`);
         continue;
       }
 
@@ -97,6 +94,7 @@ async function main() {
     console.log(`Image columns migrated: ${stats.columnsMigrated}`);
     console.log(`Base64 bytes ${dryRun ? 'that would be removed' : 'removed'} from the database: ${Math.round(stats.bytesBefore / 1024)}KB`);
     if (stats.errors) console.log(`Errors: ${stats.errors} (see above)`);
+    if (!dryRun && stats.productsTouched) console.log(`Files written to images/products/ - remember to commit them (git add images/products) and deploy so the live site can serve them.`);
   } finally {
     await pool.end();
   }
