@@ -49,7 +49,6 @@ async function loadStorefrontCatalog(){
       rating: Number(product.rating) || 0,
       reviews: Number(product.reviews) || 0,
       spec: product.spec || '',
-      description: product.description || '',
       originalPrice: product.originalPrice ? Number(product.originalPrice) : null,
       badge: product.badge || null,
       stock: product.status,
@@ -341,7 +340,6 @@ function productCard(pr){
         ${pr.originalPrice ? `<span class="card-price-old">${fmt(pr.originalPrice)}</span>` : ''}
       </div>
       <span class="card-stock">In stock</span>
-      ${pr.description ? `<div class="card-description">${pr.description.replace(/\n+/g,'<br>')}</div>` : ''}
       <div class="card-actions">
         <button class="add-btn ${inCart?'added':''}" data-id="${pr.id}">${inCart? 'Added &#10003;' : 'Add to Cart'}</button>
         <a class="quote-btn whatsapp-btn" href="${whatsappOrderUrl(pr.name)}" target="_blank" rel="noopener" title="Order via WhatsApp" aria-label="Order via WhatsApp">${WHATSAPP_ICON_SVG}</a>
