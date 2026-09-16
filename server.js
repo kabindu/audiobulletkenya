@@ -1,6 +1,7 @@
 require('dotenv').config();
 
 const express = require('express');
+const compression = require('compression');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -10,6 +11,7 @@ const { put } = require('@vercel/blob');
 const adminCredentials = require('./admin-config');
 
 const app = express();
+app.use(compression());
 const port = Number(process.env.PORT || 3000);
 const uploadDirectory = process.env.VERCEL ? path.join('/tmp', 'audiobullet-uploads') : path.join(__dirname, 'uploads');
 fs.mkdirSync(uploadDirectory, { recursive: true });
@@ -218,8 +220,9 @@ app.get('/api/account/orders', async (request, response) => {
 app.get('/favicon.ico', (_request, response) => response.sendFile(path.join(__dirname, 'images', 'logo.jpeg')));
 app.use('/admin', requireAdmin);
 app.use('/api', (request, response, next) => (request.path === '/catalog' || request.path === '/catalog/light' || request.path.startsWith('/mpesa/') || request.path.startsWith('/card/') || request.path.startsWith('/account/') || /^\/products\/\d+\/rate$/.test(request.path) || (request.method === 'GET' && /^\/products\/\d+$/.test(request.path))) ? next() : requireAdmin(request, response, next));
-app.use('/uploads', express.static(uploadDirectory));
-if (process.env.VERCEL) app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/uploads', express.static(uploadDirectory, { maxAge: '7d' }));
+if (process.env.VERCEL) app.use('/uploads', express.static(path.join(__dirname, 'uploads'), { maxAge: '7d' }));
+app.use('/images', express.static(path.join(__dirname, 'images'), { maxAge: '7d', immutable: true }));
 app.use(express.static(__dirname));
 
 async function initializeDatabase() {
@@ -353,6 +356,17 @@ app.get('/api/catalog', async (_request, response) => {
   }
 });
 
+/* Product images under /images/products/ have a matching pre-generated
+   webp thumbnail under /images/products/thumbs/ (see
+   scripts/generate-thumbnails.js) - swap to that smaller file for the
+   grid view, which never displays images larger than a card thumbnail. */
+function thumbnailUrl(imagePath) {
+  if (typeof imagePath !== 'string') return imagePath;
+  const match = imagePath.match(/^\/images\/products\/([^/]+)\.[^./]+$/);
+  if (!match) return imagePath;
+  return `/images/products/thumbs/${match[1]}.webp`;
+}
+
 /* Storefront list view (shop grid, cart, checkout summary): drops description
    and the 2nd/3rd product images, which are only ever shown on the single
    product page, so the grid isn't downloading every product's full photo set
@@ -368,6 +382,7 @@ app.get('/api/catalog/light', async (_request, response) => {
         CASE WHEN p.rating_count > 0 THEN ROUND(p.rating_sum::numeric / p.rating_count, 1) ELSE 0 END AS rating,
         p.status FROM products p JOIN categories c ON c.id = p.category_id JOIN brands b ON b.id = p.brand_id ORDER BY p.id DESC`),
     ]);
+    products.rows.forEach(product => { product.image = thumbnailUrl(product.image); });
     response.json({ categories: categories.rows, brands: brands.rows, products: products.rows });
   } catch (error) {
     console.error(error);
