@@ -149,9 +149,10 @@ function setCustomerSessionCookie(response, customerId) {
 app.post('/api/account/register', async (request, response) => {
   const name = String(request.body?.name || '').trim();
   const email = String(request.body?.email || '').trim().toLowerCase();
-  const phone = request.body?.phone ? String(request.body.phone).trim() : null;
+  const phone = normalizeMpesaPhone(request.body?.phone);
   const password = String(request.body?.password || '');
   if (!name || !email || !password) return response.status(400).json({ error: 'Name, email, and password are required.' });
+  if (!phone) return response.status(400).json({ error: 'Enter a valid Kenyan phone number (e.g. 07XX XXX XXX).' });
   if (password.length < 6) return response.status(400).json({ error: 'Password must be at least 6 characters.' });
   try {
     const result = await queryWithRetry(
@@ -199,6 +200,32 @@ app.get('/api/account/me', async (request, response) => {
   } catch (error) {
     console.error(error);
     response.status(500).json({ error: 'Could not load your account.' });
+  }
+});
+
+/* Mirrors a signed-in customer's cart server-side (best-effort - the
+   storefront still works entirely off localStorage if this fails) so
+   admin can see who has items sitting in their cart and follow up
+   directly, since there's no other record of a cart that never became
+   an order. */
+async function saveCustomerCart(customerId, items) {
+  if (!customerId) return;
+  await queryWithRetry('UPDATE customers SET cart = $2, cart_updated_at = NOW() WHERE id = $1', [customerId, JSON.stringify(items)]);
+}
+
+app.post('/api/account/cart', async (request, response) => {
+  const customerId = currentCustomerId(request);
+  if (!customerId) return response.sendStatus(401);
+  const items = Array.isArray(request.body?.items) ? request.body.items.slice(0, 100).map(item => ({
+    productId: Number(item.productId),
+    qty: Math.max(1, Number(item.qty) || 1),
+  })).filter(item => Number.isFinite(item.productId)) : [];
+  try {
+    await saveCustomerCart(customerId, items);
+    response.sendStatus(204);
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Could not save your cart.' });
   }
 });
 
@@ -273,6 +300,8 @@ async function initializeDatabase() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    ALTER TABLE customers ADD COLUMN IF NOT EXISTS cart JSONB NOT NULL DEFAULT '[]'::jsonb;
+    ALTER TABLE customers ADD COLUMN IF NOT EXISTS cart_updated_at TIMESTAMPTZ;
     CREATE TABLE IF NOT EXISTS orders (
       id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
       customer_name VARCHAR(150) NOT NULL,
@@ -366,6 +395,23 @@ function thumbnailUrl(imagePath) {
   if (!match) return imagePath;
   return `/images/products/thumbs/${match[1]}.webp`;
 }
+
+/* Admin-only (falls through to the default requireAdmin gate, same as
+   /api/products etc.): lets the admin see every customer's phone number
+   and current cart, so someone who added items and left can be followed
+   up with directly rather than being lost entirely. */
+app.get('/api/customers', async (_request, response) => {
+  try {
+    const result = await queryWithRetry(
+      `SELECT id, name, email, phone, cart, cart_updated_at, created_at FROM customers
+       ORDER BY jsonb_array_length(cart) > 0 DESC, cart_updated_at DESC NULLS LAST, created_at DESC`
+    );
+    response.json({ customers: result.rows });
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Could not load customers.' });
+  }
+});
 
 /* Storefront list view (shop grid, cart, checkout summary): drops description
    and the 2nd/3rd product images, which are only ever shown on the single
@@ -482,6 +528,7 @@ app.post('/api/mpesa/stkpush', async (request, response) => {
       [currentCustomerId(request), name, phone, email, address, JSON.stringify(orderItems), amount]
     );
     const orderId = orderResult.rows[0].id;
+    await saveCustomerCart(currentCustomerId(request), []);
 
     const accessToken = await getMpesaAccessToken();
     const timestamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
@@ -632,6 +679,7 @@ app.post('/api/card/charge', async (request, response) => {
        VALUES ($1,$2,$3,$4,$5,$6,$7,'paid','card',$8,$9) RETURNING id`,
       [currentCustomerId(request), name, phone, email, address, JSON.stringify(orderItems), amount, cardNumber.slice(-4), detectCardBrand(cardNumber)]
     );
+    await saveCustomerCart(currentCustomerId(request), []);
     response.json({ orderId: orderResult.rows[0].id, status: 'paid' });
   } catch (error) {
     console.error('Card charge error:', error);

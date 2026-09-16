@@ -40,6 +40,8 @@ CREATE TABLE IF NOT EXISTS customers (
     email VARCHAR(150) NOT NULL UNIQUE,
     phone VARCHAR(20),
     password_hash TEXT NOT NULL,
+    cart JSONB NOT NULL DEFAULT '[]'::jsonb,
+    cart_updated_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

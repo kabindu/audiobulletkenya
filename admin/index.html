@@ -24,6 +24,7 @@
         <button class="nav-item" data-view="categories"><span class="nav-icon">⌘</span>Categories</button>
         <button class="nav-item" data-view="brands"><span class="nav-icon">✦</span>Brands</button>
         <button class="nav-item" data-view="orders"><span class="nav-icon">▤</span>Orders</button>
+        <button class="nav-item" data-view="customers"><span class="nav-icon">☎</span>Customers</button>
       </nav>
       <div class="sidebar-bottom">
         <div class="store-status"><span></span><div><strong>Store is live</strong><small>Ships from Nairobi</small></div></div>
@@ -68,6 +69,7 @@
         <section class="view" id="categoriesView"><div class="page-heading"><div><p class="eyebrow">Catalog structure</p><h1>Categories</h1><p class="subheading">Keep product navigation aligned with the storefront.</p></div><button class="primary-button" data-open-entity="category">＋ Add category</button></div><div class="entity-grid" id="categoryCards"></div></section>
         <section class="view" id="brandsView"><div class="page-heading"><div><p class="eyebrow">Catalog partners</p><h1>Brands</h1><p class="subheading">Manage the manufacturers displayed across product listings.</p></div><button class="primary-button" data-open-entity="brand">＋ Add brand</button></div><div class="entity-grid" id="brandCards"></div></section>
         <section class="view" id="ordersView"><div class="page-heading"><div><p class="eyebrow">Commerce operations</p><h1>Orders</h1><p class="subheading">Monitor customer orders and Nairobi fulfillment.</p></div><button class="secondary-button">Download report ↓</button></div><section class="panel empty-orders"><div class="empty-icon">▤</div><h2>Order management is ready</h2><p>Connect the orders API to see customer purchases, payment status, and delivery progress here.</p><button class="primary-button">Connect orders API</button></section></section>
+        <section class="view" id="customersView"><div class="page-heading"><div><p class="eyebrow">Follow up directly</p><h1>Customers</h1><p class="subheading">Everyone with an account, their phone number, and what&rsquo;s currently sitting in their cart. Customers with items in cart are shown first &mdash; message them on WhatsApp before they forget.</p></div></div><section class="panel product-panel"><div class="table-meta"><span><strong id="customerCount">0</strong> customers</span></div><div class="table-wrap"><table><thead><tr><th>CUSTOMER</th><th>PHONE</th><th>CART</th><th>LAST CART ACTIVITY</th><th></th></tr></thead><tbody id="customerRows"></tbody></table></div></section></section>
       </div>
     </main>
   </div>

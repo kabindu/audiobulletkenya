@@ -1,6 +1,6 @@
 const $ = selector => document.querySelector(selector);
 const kes = value => `KSh ${Number(value).toLocaleString('en-KE')}`;
-const state = { categories: [], brands: [], products: [], entityType: 'category', editingEntityId: null, editingProductId: null };
+const state = { categories: [], brands: [], products: [], customers: [], entityType: 'category', editingEntityId: null, editingProductId: null };
 
 async function request(url, options = {}) {
   const response = await fetch(url, options);
@@ -34,6 +34,39 @@ function renderProducts() {
 function renderEntities() {
   $('#categoryCards').innerHTML = state.categories.map(category => `<article class="entity-card"><div class="entity-top"><div class="entity-symbol">◈</div><div><button class="text-button" data-edit-category="${category.id}">Edit</button><button class="text-button" data-delete-category="${category.id}">Delete</button></div></div><h3>${category.name}</h3><p>Catalog category</p><footer><span>${state.products.filter(product => product.category_id === category.id).length} products</span><span>Active</span></footer></article>`).join('');
   $('#brandCards').innerHTML = state.brands.map(brand => `<article class="entity-card"><div class="entity-top"><div class="entity-symbol">${brand.name.slice(0, 2).toUpperCase()}</div><div><button class="text-button" data-edit-brand="${brand.id}">Edit</button><button class="text-button" data-delete-brand="${brand.id}">Delete</button></div></div><h3>${brand.name}</h3><p>${brand.category_name}</p><footer><span>${state.products.filter(product => product.brand_id === brand.id).length} products</span><span>Published</span></footer></article>`).join('');
+}
+
+async function loadCustomers() {
+  const data = await request('/api/customers');
+  state.customers = data.customers;
+  renderCustomers();
+}
+
+function renderCustomers() {
+  $('#customerRows').innerHTML = state.customers.map(customer => {
+    const cartItems = (customer.cart || []).map(entry => {
+      const product = state.products.find(item => item.id === Number(entry.productId));
+      return product ? { name: product.name, qty: entry.qty, price: Number(product.price) } : null;
+    }).filter(Boolean);
+    const totalQty = cartItems.reduce((sum, item) => sum + item.qty, 0);
+    const cartValue = cartItems.reduce((sum, item) => sum + item.price * item.qty, 0);
+    const cartSummary = cartItems.length ? `${totalQty} item${totalQty === 1 ? '' : 's'} · ${kes(cartValue)}` : 'Empty';
+    const waDigits = (customer.phone || '').replace(/\D/g, '');
+    const firstName = (customer.name || '').split(' ')[0];
+    const waMessage = cartItems.length
+      ? `Hello ${firstName}, this is AudioBullet Kenya — noticed you left ${cartItems.map(item => item.name).join(', ')} in your cart. Want a hand completing your order?`
+      : `Hello ${firstName}, this is AudioBullet Kenya reaching out.`;
+    const waHref = waDigits ? `https://wa.me/${waDigits}?text=${encodeURIComponent(waMessage)}` : '';
+    const lastActivity = customer.cart_updated_at ? new Date(customer.cart_updated_at).toLocaleString('en-KE', { dateStyle: 'medium', timeStyle: 'short' }) : '—';
+    return `<tr>
+      <td><div class="product-name"><strong>${customer.name}</strong><small>${customer.email}</small></div></td>
+      <td>${customer.phone || '—'}</td>
+      <td><span class="cart-pill ${cartItems.length ? 'has-items' : 'empty'}">${cartSummary}</span></td>
+      <td>${lastActivity}</td>
+      <td><div class="row-actions">${waHref ? `<a href="${waHref}" target="_blank" rel="noopener" title="Message on WhatsApp">💬</a>` : ''}</div></td>
+    </tr>`;
+  }).join('');
+  $('#customerCount').textContent = state.customers.length;
 }
 
 function setView(view) {
@@ -186,4 +219,6 @@ $('#productForm').addEventListener('submit', async event => {
   } catch (error) { alert(error.message); }
 });
 
-loadCatalog().catch(error => alert(`Could not connect to the catalog database: ${error.message}`));
+loadCatalog()
+  .then(() => loadCustomers().catch(error => console.error('Could not load customers:', error)))
+  .catch(error => alert(`Could not connect to the catalog database: ${error.message}`));

@@ -184,6 +184,7 @@ const state = {
   sort: 'featured',
 };
 let cart = JSON.parse(localStorage.getItem(CART_STORAGE_KEY) || '{}'); // id -> qty
+let currentCustomer = null;
 
 /* ============================================================
    HELPERS
@@ -438,8 +439,28 @@ function removeFromCart(id){
   updateCartUI();
   renderProducts();
 }
+let cartSyncTimer = null;
+/* Best-effort mirror of a signed-in customer's cart server-side, so
+   admin can follow up if they add items and leave without checking
+   out. Debounced since qty +/- clicks fire this repeatedly; silently
+   no-ops for guests and on any network hiccup - the real cart always
+   stays in localStorage regardless. */
+function syncCartToServer(){
+  if(!currentCustomer) return;
+  clearTimeout(cartSyncTimer);
+  cartSyncTimer = setTimeout(()=>{
+    const items = Object.entries(cart).map(([id, qty]) => ({ productId: id, qty }));
+    fetch('/api/account/cart', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items }),
+    }).catch(()=>{});
+  }, 800);
+}
+
 function updateCartUI(){
   localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cart));
+  syncCartToServer();
   const ids = Object.keys(cart);
   const totalQty = ids.reduce((s,id)=>s+cart[id],0);
   document.getElementById('cartCount').textContent = totalQty;
@@ -570,6 +591,8 @@ async function updateAccountLabel(){
     if(!response.ok) return;
     const customer = await response.json();
     label.textContent = customer.name.split(' ')[0];
+    currentCustomer = customer;
+    if(Object.keys(cart).length) syncCartToServer();
   } catch(error) { /* stay signed out visually — not worth surfacing */ }
 }
 
