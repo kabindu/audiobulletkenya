@@ -9,6 +9,7 @@
           "admin/**",
           "css/**",
           "js/**",
+          "images/**",
           "uploads/**",
           "*.html"
         ]
