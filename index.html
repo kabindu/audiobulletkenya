@@ -41,10 +41,10 @@
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/></svg>
         <span id="accountLabel">Account</span>
       </a>
-      <div class="header-action">
+      <button class="header-action" id="helpToggleBtn" type="button" aria-haspopup="true" aria-expanded="false">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 1.5-2 1.9-2 3.5"/><circle cx="12" cy="16.5" r=".4" fill="currentColor"/></svg>
         <span>Help</span>
-      </div>
+      </button>
       <button class="cart-btn" id="cartOpenBtn">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
         <span class="cart-count" id="cartCount">0</span>
@@ -65,6 +65,35 @@
     </div>
   </nav>
 </header>
+
+<div class="help-panel" id="helpPanel" hidden>
+  <div class="help-panel-head">
+    <strong>How can we help?</strong>
+    <button class="help-close" id="helpCloseBtn" type="button" aria-label="Close help">&times;</button>
+  </div>
+  <div class="help-faqs">
+    <details>
+      <summary>How do I place an order?</summary>
+      <p>Add items to your cart and check out online, or message us on WhatsApp and we&rsquo;ll help you order directly.</p>
+    </details>
+    <details>
+      <summary>What payment methods do you accept?</summary>
+      <p>M-Pesa and card payments at checkout.</p>
+    </details>
+    <details>
+      <summary>What&rsquo;s your returns policy?</summary>
+      <p>30-day returns on unopened gear, no questions asked.</p>
+    </details>
+    <details>
+      <summary>Do you deliver outside Nairobi?</summary>
+      <p>Yes, we deliver countrywide. Message us on WhatsApp for a delivery estimate to your area.</p>
+    </details>
+  </div>
+  <a class="help-whatsapp-btn" href="https://wa.me/254727551184?text=Hello%2C%20I%20need%20some%20help" target="_blank" rel="noopener">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 3.5A11.85 11.85 0 0 0 12.08 0C5.53 0 .2 5.33.2 11.88c0 2.1.55 4.15 1.6 5.96L.1 24l6.3-1.65a11.86 11.86 0 0 0 5.68 1.45h.01c6.55 0 11.88-5.33 11.88-11.88 0-3.17-1.23-6.15-3.47-8.42ZM12.09 21.8h-.01a9.86 9.86 0 0 1-5.02-1.37l-.36-.21-3.74.98 1-3.64-.23-.37a9.86 9.86 0 1 1 8.36 4.61Zm5.41-7.39c-.3-.15-1.76-.87-2.03-.97-.27-.1-.47-.15-.67.15-.2.3-.77.97-.94 1.17-.17.2-.35.22-.65.07-.3-.15-1.25-.46-2.38-1.47-.88-.79-1.47-1.76-1.64-2.06-.17-.3-.02-.46.13-.61.14-.14.3-.35.45-.52.15-.17.2-.3.3-.5.1-.2.05-.37-.02-.52-.07-.15-.67-1.62-.92-2.22-.24-.58-.49-.5-.67-.51h-.57c-.2 0-.52.07-.79.37-.27.3-1.04 1.02-1.04 2.49s1.07 2.89 1.22 3.09c.15.2 2.1 3.2 5.08 4.49.71.31 1.27.49 1.7.63.71.23 1.36.2 1.87.12.57-.08 1.76-.72 2.01-1.42.25-.7.25-1.3.17-1.42-.07-.12-.27-.2-.57-.35Z"/></svg>
+    Chat with us on WhatsApp
+  </a>
+</div>
 
 <!-- ============ SHOP ============ -->
 <section class="shop-wrap" id="shop">
@@ -192,7 +221,7 @@
     </div>
     <div class="footer-col">
       <h5>Support</h5>
-      <a href="#">Help Center</a>
+      <a href="#" id="footerHelpLink">Help Center</a>
       <a href="#">Returns &amp; Warranty</a>
       <a href="#">Nairobi Shipping Info</a>
       <a href="#">Contact Us</a>

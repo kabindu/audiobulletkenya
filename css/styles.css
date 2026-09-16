@@ -58,6 +58,22 @@ header.main-header{position:sticky;top:0;z-index:60;background:var(--accent-2);b
 .header-action{display:flex;flex-direction:column;align-items:center;gap:2px;font-size:11px;color:#fff;cursor:pointer;padding:8px 12px;border-radius:6px;border:1px solid transparent;}
 .header-action svg{width:20px;height:20px;}
 .header-action:hover{border-color:rgba(255,255,255,.35);}
+
+.help-panel{position:fixed;top:72px;right:20px;width:min(320px,calc(100vw - 32px));background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;z-index:90;}
+.help-panel[hidden]{display:none;}
+.help-panel-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;}
+.help-panel-head strong{font-size:15px;}
+.help-close{font-size:20px;line-height:1;color:var(--text-faint);padding:2px 6px;}
+.help-close:hover{color:var(--text);}
+.help-faqs details{border-top:1px solid var(--border);padding:9px 0;}
+.help-faqs details:first-child{border-top:0;padding-top:2px;}
+.help-faqs summary{cursor:pointer;font-size:13px;font-weight:600;list-style:none;}
+.help-faqs summary::-webkit-details-marker{display:none;}
+.help-faqs summary::marker{content:'';}
+.help-faqs p{margin-top:6px;font-size:12.5px;line-height:1.55;color:var(--text-muted);}
+.help-whatsapp-btn{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:12px;background:#25d366;color:#fff;padding:10px;border-radius:8px;font-size:13px;font-weight:700;text-decoration:none;}
+.help-whatsapp-btn:hover{background:#20bd5a;}
+.help-whatsapp-btn svg{width:17px;height:17px;fill:#fff;flex-shrink:0;}
 .cart-btn{display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 12px;border-radius:6px;transition:border-color .15s;border:1px solid transparent;position:relative;color:#fff;}
 .cart-btn:hover{border-color:rgba(255,255,255,.35);}
 .cart-btn .cart-label{font-size:11px;font-weight:600;color:#fff;}

@@ -214,6 +214,38 @@ function initStaticUI(){
   // filter: category checkboxes
   renderCategoryFilter();
 
+  initHelpPanel();
+}
+
+/* ============================================================
+   HELP PANEL (header "Help" icon + footer "Help Center" link)
+   ============================================================ */
+function initHelpPanel(){
+  const panel = document.getElementById('helpPanel');
+  const toggleBtn = document.getElementById('helpToggleBtn');
+  const closeBtn = document.getElementById('helpCloseBtn');
+  const footerLink = document.getElementById('footerHelpLink');
+  if(!panel || !toggleBtn) return;
+
+  function openHelp(){
+    panel.hidden = false;
+    toggleBtn.setAttribute('aria-expanded', 'true');
+  }
+  function closeHelp(){
+    panel.hidden = true;
+    toggleBtn.setAttribute('aria-expanded', 'false');
+  }
+
+  toggleBtn.addEventListener('click', e=>{
+    e.stopPropagation();
+    panel.hidden ? openHelp() : closeHelp();
+  });
+  closeBtn.addEventListener('click', closeHelp);
+  footerLink?.addEventListener('click', e=>{ e.preventDefault(); openHelp(); });
+  document.addEventListener('click', e=>{
+    if(!panel.hidden && !panel.contains(e.target) && e.target !== toggleBtn) closeHelp();
+  });
+  document.addEventListener('keydown', e=>{ if(e.key === 'Escape') closeHelp(); });
 }
 
 function renderCategoryFilter(){
