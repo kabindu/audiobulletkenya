@@ -88,12 +88,30 @@ function renderOrders() {
   $('#orderRows').innerHTML = orders.map(order => {
     const items = (order.items || []).map(entry => {
       const product = state.products.find(item => item.id === Number(entry.productId));
-      return { name: product ? product.name : `Product #${entry.productId}`, qty: entry.qty };
+      return {
+        name: product ? product.name : `Product #${entry.productId}`,
+        qty: entry.qty,
+        sellerId: product?.seller_id || null,
+        sellerName: product?.seller_name || null,
+      };
     });
-    const itemsSummary = items.map(item => `${item.qty}× ${item.name}`).join(', ');
+    const itemsSummary = items.map(item => `${item.qty}× ${item.name}${item.sellerName ? ` (${item.sellerName})` : ''}`).join(', ');
+    const sellersInvolved = [...new Map(items.filter(item => item.sellerId).map(item => [item.sellerId, item.sellerName])).entries()];
+    const shopSummary = sellersInvolved.length ? sellersInvolved.map(([, name]) => name).join(', ') : 'Store';
+
     const waDigits = (order.customer_phone || '').replace(/\D/g, '');
     const waMessage = `Hello ${(order.customer_name || '').split(' ')[0]}, this is AudioBullet Kenya following up on order #${order.id} (${kes(order.subtotal)}).`;
     const waHref = waDigits ? `https://wa.me/${waDigits}?text=${encodeURIComponent(waMessage)}` : '';
+
+    const sellerButtons = sellersInvolved.map(([sellerId]) => {
+      const seller = state.sellers.find(item => item.id === sellerId);
+      const digits = (seller?.phone || '').replace(/\D/g, '');
+      if (!digits) return '';
+      const sellerItems = items.filter(item => item.sellerId === sellerId).map(item => `${item.qty}× ${item.name}`).join(', ');
+      const message = `Hello ${seller.contact_name.split(' ')[0]}, you have a new order (#${order.id}) for ${sellerItems} - please prepare it for the customer.`;
+      return `<a href="https://wa.me/${digits}?text=${encodeURIComponent(message)}" target="_blank" rel="noopener" title="Notify ${seller.business_name} on WhatsApp">🏪</a>`;
+    }).join('');
+
     const date = new Date(order.created_at).toLocaleString('en-KE', { dateStyle: 'medium', timeStyle: 'short' });
     const payment = order.payment_method === 'card'
       ? `Card${order.card_brand ? ` · ${order.card_brand}` : ''}${order.card_last4 ? ` ••${order.card_last4}` : ''}`
@@ -102,11 +120,12 @@ function renderOrders() {
       <td><strong>#${order.id}</strong></td>
       <td><div class="product-name"><strong>${order.customer_name}</strong><small>${order.customer_phone}</small></div></td>
       <td><span title="${itemsSummary}">${items.length} item${items.length === 1 ? '' : 's'}</span></td>
+      <td>${sellersInvolved.length ? `<span class="category-pill" title="${shopSummary}">${shopSummary}</span>` : '<small>Store</small>'}</td>
       <td class="price-cell">${kes(order.subtotal)}</td>
       <td><span class="category-pill">${payment}</span></td>
       <td><span class="stock-pill ${ORDER_STATUS_PILL[order.status] || 'low'}">${order.status}</span></td>
       <td>${date}</td>
-      <td><div class="row-actions">${waHref ? `<a href="${waHref}" target="_blank" rel="noopener" title="Message on WhatsApp">💬</a>` : ''}</div></td>
+      <td><div class="row-actions">${waHref ? `<a href="${waHref}" target="_blank" rel="noopener" title="Message customer on WhatsApp">💬</a>` : ''}${sellerButtons}</div></td>
     </tr>`;
   }).join('');
   $('#orderCount').textContent = orders.length;
@@ -129,13 +148,29 @@ function renderSellers() {
       <td><strong>${seller.business_name}</strong></td>
       <td><div class="product-name"><strong>${seller.contact_name}</strong><small>${seller.email}</small></div></td>
       <td>${seller.phone}</td>
-      <td>${seller.product_count}</td>
+      <td><button class="text-button" data-view-seller-products="${seller.id}">${seller.product_count} product${Number(seller.product_count) === 1 ? '' : 's'}</button></td>
       <td><span class="stock-pill ${SELLER_STATUS_PILL[seller.status] || 'low'}">${seller.status}</span></td>
       <td>${applied}</td>
       <td><div class="row-actions">${actions.join('')}</div></td>
     </tr>`;
   }).join('');
   $('#sellerCount').textContent = state.sellers.length;
+}
+
+function openSellerProductsModal(sellerId) {
+  const seller = state.sellers.find(item => item.id === sellerId);
+  if (!seller) return;
+  const products = state.products.filter(product => product.seller_id === sellerId);
+  $('#sellerProductsEyebrow').textContent = seller.business_name;
+  $('#sellerProductsTitle').textContent = products.length ? `${products.length} product${products.length === 1 ? '' : 's'}` : 'No products listed yet';
+  $('#sellerProductRows').innerHTML = products.map(product => `<tr><td><div class="product-cell"><img class="product-thumb" src="${product.image || ''}" alt=""><div class="product-name"><strong>${product.name}</strong><small>${product.brand}${product.badge ? ` · ${product.badge}` : ''}</small></div></div></td><td><span class="category-pill">${product.category}</span></td><td class="price-cell">${kes(product.price)}</td><td><span class="stock-pill ${product.status}">${product.status === 'out' ? 'Out of stock' : `${product.stock} in stock`}</span></td></tr>`).join('');
+  $('#sellerProductsModal').classList.add('open');
+  $('#sellerProductsModal').setAttribute('aria-hidden', 'false');
+}
+
+function closeSellerProductsModal() {
+  $('#sellerProductsModal').classList.remove('open');
+  $('#sellerProductsModal').setAttribute('aria-hidden', 'true');
 }
 
 async function setSellerStatus(id, status) {
@@ -255,8 +290,10 @@ document.querySelectorAll('[data-open-product]').forEach(button => button.addEve
 document.querySelectorAll('[data-close-product]').forEach(button => button.addEventListener('click', closeProductModal));
 document.querySelectorAll('[data-open-entity]').forEach(button => button.addEventListener('click', () => openEntityModal(button.dataset.openEntity)));
 document.querySelectorAll('[data-close-entity]').forEach(button => button.addEventListener('click', closeEntityModal));
+document.querySelectorAll('[data-close-seller-products]').forEach(button => button.addEventListener('click', closeSellerProductsModal));
 $('#productModal').addEventListener('click', event => { if (event.target.id === 'productModal') closeProductModal(); });
 $('#entityModal').addEventListener('click', event => { if (event.target.id === 'entityModal') closeEntityModal(); });
+$('#sellerProductsModal').addEventListener('click', event => { if (event.target.id === 'sellerProductsModal') closeSellerProductsModal(); });
 $('#productSearch').addEventListener('input', renderProducts);
 $('#categoryFilter').addEventListener('change', renderProducts);
 $('#stockFilter').addEventListener('change', renderProducts);
@@ -267,7 +304,7 @@ $('#productForm [name="image"]').addEventListener('change', event => readImage(e
 $('#productForm [name="image2"]').addEventListener('change', event => readImage(event.target, $('#productImagePreview2')));
 $('#productForm [name="image3"]').addEventListener('change', event => readImage(event.target, $('#productImagePreview3')));
 document.addEventListener('click', event => {
-  const button = event.target.closest('[data-edit-category], [data-edit-brand], [data-delete-category], [data-delete-brand], [data-edit-product], [data-delete-product], [data-seller-status]');
+  const button = event.target.closest('[data-edit-category], [data-edit-brand], [data-delete-category], [data-delete-brand], [data-edit-product], [data-delete-product], [data-seller-status], [data-view-seller-products]');
   if (!button) return;
   if (button.dataset.editCategory) editEntity('category', button.dataset.editCategory);
   if (button.dataset.editBrand) editEntity('brand', button.dataset.editBrand);
@@ -279,6 +316,7 @@ document.addEventListener('click', event => {
     const [id, status] = button.dataset.sellerStatus.split(':');
     setSellerStatus(id, status);
   }
+  if (button.dataset.viewSellerProducts) openSellerProductsModal(Number(button.dataset.viewSellerProducts));
 });
 
 $('#entityForm').addEventListener('submit', async event => {
@@ -304,9 +342,9 @@ $('#productForm').addEventListener('submit', async event => {
 });
 
 loadCatalog()
+  .then(() => loadSellers().catch(error => console.error('Could not load sellers:', error)))
   .then(() => Promise.all([
     loadCustomers().catch(error => console.error('Could not load customers:', error)),
     loadOrders().catch(error => console.error('Could not load orders:', error)),
-    loadSellers().catch(error => console.error('Could not load sellers:', error)),
   ]))
   .catch(error => alert(`Could not connect to the catalog database: ${error.message}`));
