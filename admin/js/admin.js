@@ -11,6 +11,51 @@ async function request(url, options = {}) {
   return data;
 }
 
+/* ---------- lightweight toast + confirm (no browser alert/confirm) ---------- */
+function ensureNotifyStyles() {
+  if (document.getElementById('notifyStyles')) return;
+  const style = document.createElement('style');
+  style.id = 'notifyStyles';
+  style.textContent = `#toastStack{position:fixed;top:20px;right:20px;z-index:300;display:flex;flex-direction:column;gap:8px;pointer-events:none;}.toast{pointer-events:auto;min-width:220px;max-width:340px;padding:12px 16px;border-radius:8px;font-size:13px;font-weight:600;color:#fff;box-shadow:0 8px 24px rgba(0,0,0,.18);opacity:0;transform:translateX(16px);transition:opacity .2s ease,transform .2s ease;}.toast.show{opacity:1;transform:translateX(0);}.toast.success{background:#16845b;}.toast.error{background:#c24135;}.toast.info{background:#142333;}.confirm-backdrop{position:fixed;inset:0;background:rgba(19,25,33,.55);display:flex;align-items:center;justify-content:center;z-index:310;}.confirm-box{background:#fff;border-radius:10px;padding:22px 24px;max-width:340px;box-shadow:0 24px 60px rgba(0,0,0,.25);}.confirm-box p{margin:0 0 18px;font-size:14px;color:#17212b;line-height:1.5;}.confirm-actions{display:flex;justify-content:flex-end;gap:8px;}`;
+  document.head.appendChild(style);
+}
+
+function showToast(message, type = 'success') {
+  ensureNotifyStyles();
+  let stack = document.getElementById('toastStack');
+  if (!stack) {
+    stack = document.createElement('div');
+    stack.id = 'toastStack';
+    document.body.appendChild(stack);
+  }
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  toast.textContent = message;
+  stack.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add('show'));
+  setTimeout(() => {
+    toast.classList.remove('show');
+    setTimeout(() => toast.remove(), 250);
+  }, 3200);
+}
+
+function confirmAction(message) {
+  ensureNotifyStyles();
+  return new Promise(resolve => {
+    const backdrop = document.createElement('div');
+    backdrop.className = 'confirm-backdrop';
+    backdrop.innerHTML = `<div class="confirm-box"><p>${message}</p><div class="confirm-actions"><button type="button" class="secondary-button" data-confirm="cancel">Cancel</button><button type="button" class="primary-button" data-confirm="ok">Confirm</button></div></div>`;
+    document.body.appendChild(backdrop);
+    backdrop.addEventListener('click', event => {
+      if (event.target === backdrop) { backdrop.remove(); resolve(false); return; }
+      const action = event.target.closest('[data-confirm]');
+      if (!action) return;
+      backdrop.remove();
+      resolve(action.dataset.confirm === 'ok');
+    });
+  });
+}
+
 function renderCategoryOptions() {
   const categoryOptions = state.categories.map(item => `<option value="${item.id}">${item.name}</option>`).join('');
   const brandOptions = state.brands.map(item => `<option value="${item.id}">${item.name}</option>`).join('');
@@ -175,11 +220,12 @@ function closeSellerProductsModal() {
 
 async function setSellerStatus(id, status) {
   const label = status === 'active' ? 'approve this seller' : status === 'suspended' ? 'suspend this seller' : 'update this seller';
-  if (!window.confirm(`Are you sure you want to ${label}?`)) return;
+  if (!(await confirmAction(`Are you sure you want to ${label}?`))) return;
   try {
     await request(`/api/sellers/${id}/status`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
+    showToast(status === 'active' ? 'Seller approved.' : status === 'suspended' ? 'Seller suspended.' : 'Seller updated.');
     await loadSellers();
-  } catch (error) { alert(error.message); }
+  } catch (error) { showToast(error.message, 'error'); }
 }
 
 function setView(view) {
@@ -253,11 +299,12 @@ function closeProductModal() {
 }
 
 async function deleteRecord(type, id, label) {
-  if (!window.confirm(`Delete ${label}?`)) return;
+  if (!(await confirmAction(`Delete ${label}?`))) return;
   try {
     await request(`/api/${type}/${id}`, { method: 'DELETE' });
+    showToast(`Deleted ${label}.`);
     await loadCatalog();
-  } catch (error) { alert(error.message); }
+  } catch (error) { showToast(error.message, 'error'); }
 }
 
 function readImage(input, preview) {
@@ -322,29 +369,37 @@ document.addEventListener('click', event => {
 $('#entityForm').addEventListener('submit', async event => {
   event.preventDefault();
   const data = new FormData(event.target);
+  const entityType = state.entityType;
+  const editingId = state.editingEntityId;
+  const label = entityType === 'brand' ? 'Brand' : 'Category';
+  closeEntityModal(); // close immediately so a second click can't submit the same form twice
   try {
-    const resource = state.entityType === 'category' ? 'categories' : 'brands';
-    const payload = state.entityType === 'category' ? { name: data.get('name') } : { name: data.get('name'), categoryId: data.get('category') };
-    await request(`/api/${resource}${state.editingEntityId ? `/${state.editingEntityId}` : ''}`, { method: state.editingEntityId ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    closeEntityModal();
-    state.editingEntityId = null;
+    const resource = entityType === 'category' ? 'categories' : 'brands';
+    const payload = entityType === 'category' ? { name: data.get('name') } : { name: data.get('name'), categoryId: data.get('category') };
+    await request(`/api/${resource}${editingId ? `/${editingId}` : ''}`, { method: editingId ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    showToast(editingId ? `${label} updated.` : `${label} added.`);
     await loadCatalog();
-  } catch (error) { alert(error.message); }
+  } catch (error) { showToast(error.message, 'error'); }
 });
 
 $('#productForm').addEventListener('submit', async event => {
   event.preventDefault();
+  const formData = new FormData(event.target);
+  const editingId = state.editingProductId;
+  closeProductModal(); // close immediately so a second click can't submit the same form twice
   try {
-    await request(`/api/products${state.editingProductId ? `/${state.editingProductId}` : ''}`, { method: state.editingProductId ? 'PUT' : 'POST', body: new FormData(event.target) });
-    closeProductModal();
+    await request(`/api/products${editingId ? `/${editingId}` : ''}`, { method: editingId ? 'PUT' : 'POST', body: formData });
+    showToast(editingId ? 'Product updated.' : 'Product added.');
     await loadCatalog();
-  } catch (error) { alert(error.message); }
+  } catch (error) { showToast(error.message, 'error'); }
 });
 
+const sellersPromise = loadSellers().catch(error => console.error('Could not load sellers:', error));
 loadCatalog()
-  .then(() => loadSellers().catch(error => console.error('Could not load sellers:', error)))
   .then(() => Promise.all([
     loadCustomers().catch(error => console.error('Could not load customers:', error)),
     loadOrders().catch(error => console.error('Could not load orders:', error)),
   ]))
-  .catch(error => alert(`Could not connect to the catalog database: ${error.message}`));
+  .then(() => sellersPromise)
+  .then(() => renderOrders()) // sellers may still have resolved after orders did - re-render so the seller WhatsApp buttons show up
+  .catch(error => showToast(`Could not connect to the catalog database: ${error.message}`, 'error'));

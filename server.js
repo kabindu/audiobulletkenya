@@ -467,7 +467,7 @@ app.get('/favicon.ico', (_request, response) => response.sendFile(path.join(__di
 app.use('/admin', requireAdmin);
 app.get('/seller/login.html', (_request, response) => response.sendFile(path.join(__dirname, 'seller', 'login.html')));
 app.use('/seller', requireSellerPage);
-app.use('/api', (request, response, next) => (request.path === '/catalog' || request.path === '/catalog/light' || request.path.startsWith('/mpesa/') || request.path.startsWith('/card/') || request.path.startsWith('/account/') || request.path.startsWith('/seller/') || /^\/products\/\d+\/rate$/.test(request.path) || (request.method === 'GET' && /^\/products\/\d+$/.test(request.path))) ? next() : requireAdmin(request, response, next));
+app.use('/api', (request, response, next) => (request.path === '/catalog' || request.path === '/catalog/light' || request.path === '/taxonomy' || request.path.startsWith('/mpesa/') || request.path.startsWith('/card/') || request.path.startsWith('/account/') || request.path.startsWith('/seller/') || /^\/products\/\d+\/rate$/.test(request.path) || (request.method === 'GET' && /^\/products\/\d+$/.test(request.path))) ? next() : requireAdmin(request, response, next));
 app.use('/uploads', express.static(uploadDirectory, { maxAge: '7d' }));
 if (process.env.VERCEL) app.use('/uploads', express.static(path.join(__dirname, 'uploads'), { maxAge: '7d' }));
 app.use('/images', express.static(path.join(__dirname, 'images'), { maxAge: '7d', immutable: true }));
@@ -660,6 +660,22 @@ app.get('/api/orders', async (_request, response) => {
   } catch (error) {
     console.error(error);
     response.status(500).json({ error: 'Could not load orders.' });
+  }
+});
+
+/* Categories + brands only - for the seller dashboard's product form
+   dropdowns, which don't need the full product catalog (images and
+   all) that /api/catalog/light carries just to populate two selects. */
+app.get('/api/taxonomy', async (_request, response) => {
+  try {
+    const [categories, brands] = await Promise.all([
+      queryWithRetry('SELECT id, name FROM categories ORDER BY name'),
+      queryWithRetry(`SELECT b.id, b.name, b.category_id, c.name AS category_name FROM brands b JOIN categories c ON c.id = b.category_id ORDER BY b.name`),
+    ]);
+    response.json({ categories: categories.rows, brands: brands.rows });
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Could not load categories and brands.' });
   }
 });
 
