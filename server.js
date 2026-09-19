@@ -8,6 +8,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const { Pool } = require('pg');
 const { put } = require('@vercel/blob');
+const sharp = require('sharp');
 const adminCredentials = require('./admin-config');
 
 const app = express();
@@ -1058,7 +1059,15 @@ async function imageUrl(file) {
     });
     return blob.url;
   }
-  if (file.buffer) return `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
+  if (file.buffer) {
+    /* No Blob token configured and no persistent disk to write to (Vercel's
+       filesystem is read-only except /tmp) - the only place left to keep the
+       image is the database itself. A raw phone photo there is several MB of
+       base64 text on every catalog/product-list response, so resize and
+       recompress before it ever gets that far. */
+    const optimized = await sharp(file.buffer).resize({ width: 1200, withoutEnlargement: true }).webp({ quality: 80 }).toBuffer();
+    return `data:image/webp;base64,${optimized.toString('base64')}`;
+  }
   return `/uploads/${file.filename}`;
 }
 

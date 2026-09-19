@@ -1,6 +1,6 @@
 const $ = selector => document.querySelector(selector);
 const kes = value => `KSh ${Number(value).toLocaleString('en-KE')}`;
-const state = { categories: [], brands: [], products: [], customers: [], orders: [], sellers: [], entityType: 'category', editingEntityId: null, editingProductId: null };
+const state = { categories: [], brands: [], products: [], customers: [], orders: [], sellers: [], entityType: 'category', editingEntityId: null, editingProductId: null, viewingSellerId: null };
 const SELLER_STATUS_PILL = { active: 'in', pending: 'low', suspended: 'out' };
 const ORDER_STATUS_PILL = { paid: 'in', pending: 'low', failed: 'out', cancelled: 'out' };
 
@@ -71,7 +71,8 @@ function renderProducts() {
   const stock = $('#stockFilter')?.value || 'all';
   const products = state.products.filter(product => {
     const matchesQuery = [product.name, product.brand, product.category].some(value => (value || '').toLowerCase().includes(query));
-    return matchesQuery && (category === 'all' || String(product.category_id) === category) && (stock === 'all' || product.status === stock);
+    const matchesSeller = !state.viewingSellerId || product.seller_id === state.viewingSellerId;
+    return matchesQuery && matchesSeller && (category === 'all' || String(product.category_id) === category) && (stock === 'all' || product.status === stock);
   });
   $('#productRows').innerHTML = products.map(product => `<tr><td class="check"><input type="checkbox" aria-label="Select ${product.name}"></td><td><div class="product-cell"><img class="product-thumb" src="${product.image || ''}" alt=""><div class="product-name"><strong>${product.name}</strong><small>${product.brand}${product.badge ? ` · ${product.badge}` : ''}</small></div></div></td><td><span class="category-pill">${product.category}</span></td><td class="price-cell">${kes(product.price)}</td><td><span class="stock-pill ${product.status}">${product.status === 'out' ? 'Out of stock' : `${product.stock} in stock`}</span></td><td>${product.seller_name ? `<span class="category-pill">${product.seller_name}</span>` : '<small>Store</small>'}</td><td><span class="status-pill">Published</span></td><td><div class="row-actions"><button title="Edit product" data-edit-product="${product.id}">✎</button><button title="Delete product" data-delete-product="${product.id}">×</button></div></td></tr>`).join('');
   $('#productCount').textContent = products.length;
@@ -202,20 +203,24 @@ function renderSellers() {
   $('#sellerCount').textContent = state.sellers.length;
 }
 
-function openSellerProductsModal(sellerId) {
+function viewSellerProducts(sellerId) {
   const seller = state.sellers.find(item => item.id === sellerId);
   if (!seller) return;
-  const products = state.products.filter(product => product.seller_id === sellerId);
-  $('#sellerProductsEyebrow').textContent = seller.business_name;
-  $('#sellerProductsTitle').textContent = products.length ? `${products.length} product${products.length === 1 ? '' : 's'}` : 'No products listed yet';
-  $('#sellerProductRows').innerHTML = products.map(product => `<tr><td><div class="product-cell"><img class="product-thumb" src="${product.image || ''}" alt=""><div class="product-name"><strong>${product.name}</strong><small>${product.brand}${product.badge ? ` · ${product.badge}` : ''}</small></div></div></td><td><span class="category-pill">${product.category}</span></td><td class="price-cell">${kes(product.price)}</td><td><span class="stock-pill ${product.status}">${product.status === 'out' ? 'Out of stock' : `${product.stock} in stock`}</span></td></tr>`).join('');
-  $('#sellerProductsModal').classList.add('open');
-  $('#sellerProductsModal').setAttribute('aria-hidden', 'false');
+  state.viewingSellerId = sellerId;
+  $('#sellerFilterBanner').hidden = false;
+  $('#sellerFilterName').textContent = seller.business_name;
+  $('#productsHeading').textContent = `${seller.business_name}'s products`;
+  $('#productsSubheading').textContent = `Everything ${seller.business_name} has listed on the storefront.`;
+  setView('products');
+  renderProducts();
 }
 
-function closeSellerProductsModal() {
-  $('#sellerProductsModal').classList.remove('open');
-  $('#sellerProductsModal').setAttribute('aria-hidden', 'true');
+function clearSellerFilter() {
+  state.viewingSellerId = null;
+  $('#sellerFilterBanner').hidden = true;
+  $('#productsHeading').textContent = 'Products';
+  $('#productsSubheading').textContent = 'Manage everything that appears in the AudioBullet Kenya storefront.';
+  renderProducts();
 }
 
 async function setSellerStatus(id, status) {
@@ -331,16 +336,18 @@ async function loadCatalog() {
   renderEntities();
 }
 
-document.querySelectorAll('.nav-item[data-view]').forEach(item => item.addEventListener('click', () => setView(item.dataset.view)));
+document.querySelectorAll('.nav-item[data-view]').forEach(item => item.addEventListener('click', () => {
+  if (item.dataset.view === 'products' && state.viewingSellerId) clearSellerFilter();
+  setView(item.dataset.view);
+}));
 document.querySelectorAll('[data-view-target]').forEach(item => item.addEventListener('click', () => setView(item.dataset.viewTarget)));
 document.querySelectorAll('[data-open-product]').forEach(button => button.addEventListener('click', () => openProductModal()));
 document.querySelectorAll('[data-close-product]').forEach(button => button.addEventListener('click', closeProductModal));
 document.querySelectorAll('[data-open-entity]').forEach(button => button.addEventListener('click', () => openEntityModal(button.dataset.openEntity)));
 document.querySelectorAll('[data-close-entity]').forEach(button => button.addEventListener('click', closeEntityModal));
-document.querySelectorAll('[data-close-seller-products]').forEach(button => button.addEventListener('click', closeSellerProductsModal));
+$('#clearSellerFilterBtn').addEventListener('click', clearSellerFilter);
 $('#productModal').addEventListener('click', event => { if (event.target.id === 'productModal') closeProductModal(); });
 $('#entityModal').addEventListener('click', event => { if (event.target.id === 'entityModal') closeEntityModal(); });
-$('#sellerProductsModal').addEventListener('click', event => { if (event.target.id === 'sellerProductsModal') closeSellerProductsModal(); });
 $('#productSearch').addEventListener('input', renderProducts);
 $('#categoryFilter').addEventListener('change', renderProducts);
 $('#stockFilter').addEventListener('change', renderProducts);
@@ -363,7 +370,7 @@ document.addEventListener('click', event => {
     const [id, status] = button.dataset.sellerStatus.split(':');
     setSellerStatus(id, status);
   }
-  if (button.dataset.viewSellerProducts) openSellerProductsModal(Number(button.dataset.viewSellerProducts));
+  if (button.dataset.viewSellerProducts) viewSellerProducts(Number(button.dataset.viewSellerProducts));
 });
 
 $('#entityForm').addEventListener('submit', async event => {
