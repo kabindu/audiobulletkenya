@@ -1,6 +1,7 @@
 const $ = selector => document.querySelector(selector);
 const kes = value => `KSh ${Number(value).toLocaleString('en-KE')}`;
-const state = { categories: [], brands: [], products: [], customers: [], orders: [], entityType: 'category', editingEntityId: null, editingProductId: null };
+const state = { categories: [], brands: [], products: [], customers: [], orders: [], sellers: [], entityType: 'category', editingEntityId: null, editingProductId: null };
+const SELLER_STATUS_PILL = { active: 'in', pending: 'low', suspended: 'out' };
 const ORDER_STATUS_PILL = { paid: 'in', pending: 'low', failed: 'out', cancelled: 'out' };
 
 async function request(url, options = {}) {
@@ -27,7 +28,7 @@ function renderProducts() {
     const matchesQuery = [product.name, product.brand, product.category].some(value => (value || '').toLowerCase().includes(query));
     return matchesQuery && (category === 'all' || String(product.category_id) === category) && (stock === 'all' || product.status === stock);
   });
-  $('#productRows').innerHTML = products.map(product => `<tr><td class="check"><input type="checkbox" aria-label="Select ${product.name}"></td><td><div class="product-cell"><img class="product-thumb" src="${product.image || ''}" alt=""><div class="product-name"><strong>${product.name}</strong><small>${product.brand}${product.badge ? ` · ${product.badge}` : ''}</small></div></div></td><td><span class="category-pill">${product.category}</span></td><td class="price-cell">${kes(product.price)}</td><td><span class="stock-pill ${product.status}">${product.status === 'out' ? 'Out of stock' : `${product.stock} in stock`}</span></td><td><span class="status-pill">Published</span></td><td><div class="row-actions"><button title="Edit product" data-edit-product="${product.id}">✎</button><button title="Delete product" data-delete-product="${product.id}">×</button></div></td></tr>`).join('');
+  $('#productRows').innerHTML = products.map(product => `<tr><td class="check"><input type="checkbox" aria-label="Select ${product.name}"></td><td><div class="product-cell"><img class="product-thumb" src="${product.image || ''}" alt=""><div class="product-name"><strong>${product.name}</strong><small>${product.brand}${product.badge ? ` · ${product.badge}` : ''}</small></div></div></td><td><span class="category-pill">${product.category}</span></td><td class="price-cell">${kes(product.price)}</td><td><span class="stock-pill ${product.status}">${product.status === 'out' ? 'Out of stock' : `${product.stock} in stock`}</span></td><td>${product.seller_name ? `<span class="category-pill">${product.seller_name}</span>` : '<small>Store</small>'}</td><td><span class="status-pill">Published</span></td><td><div class="row-actions"><button title="Edit product" data-edit-product="${product.id}">✎</button><button title="Delete product" data-delete-product="${product.id}">×</button></div></td></tr>`).join('');
   $('#productCount').textContent = products.length;
   $('#showingCount').textContent = products.length;
 }
@@ -109,6 +110,41 @@ function renderOrders() {
     </tr>`;
   }).join('');
   $('#orderCount').textContent = orders.length;
+}
+
+async function loadSellers() {
+  const data = await request('/api/sellers');
+  state.sellers = data.sellers;
+  renderSellers();
+}
+
+function renderSellers() {
+  $('#sellerRows').innerHTML = state.sellers.map(seller => {
+    const applied = new Date(seller.created_at).toLocaleDateString('en-KE', { year: 'numeric', month: 'short', day: 'numeric' });
+    const actions = [];
+    if (seller.status === 'pending') actions.push(`<button title="Approve" data-seller-status="${seller.id}:active">✓</button>`);
+    if (seller.status !== 'suspended') actions.push(`<button title="Suspend" data-seller-status="${seller.id}:suspended">⛔</button>`);
+    if (seller.status === 'suspended') actions.push(`<button title="Reactivate" data-seller-status="${seller.id}:active">↺</button>`);
+    return `<tr>
+      <td><strong>${seller.business_name}</strong></td>
+      <td><div class="product-name"><strong>${seller.contact_name}</strong><small>${seller.email}</small></div></td>
+      <td>${seller.phone}</td>
+      <td>${seller.product_count}</td>
+      <td><span class="stock-pill ${SELLER_STATUS_PILL[seller.status] || 'low'}">${seller.status}</span></td>
+      <td>${applied}</td>
+      <td><div class="row-actions">${actions.join('')}</div></td>
+    </tr>`;
+  }).join('');
+  $('#sellerCount').textContent = state.sellers.length;
+}
+
+async function setSellerStatus(id, status) {
+  const label = status === 'active' ? 'approve this seller' : status === 'suspended' ? 'suspend this seller' : 'update this seller';
+  if (!window.confirm(`Are you sure you want to ${label}?`)) return;
+  try {
+    await request(`/api/sellers/${id}/status`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
+    await loadSellers();
+  } catch (error) { alert(error.message); }
 }
 
 function setView(view) {
@@ -231,7 +267,7 @@ $('#productForm [name="image"]').addEventListener('change', event => readImage(e
 $('#productForm [name="image2"]').addEventListener('change', event => readImage(event.target, $('#productImagePreview2')));
 $('#productForm [name="image3"]').addEventListener('change', event => readImage(event.target, $('#productImagePreview3')));
 document.addEventListener('click', event => {
-  const button = event.target.closest('[data-edit-category], [data-edit-brand], [data-delete-category], [data-delete-brand], [data-edit-product], [data-delete-product]');
+  const button = event.target.closest('[data-edit-category], [data-edit-brand], [data-delete-category], [data-delete-brand], [data-edit-product], [data-delete-product], [data-seller-status]');
   if (!button) return;
   if (button.dataset.editCategory) editEntity('category', button.dataset.editCategory);
   if (button.dataset.editBrand) editEntity('brand', button.dataset.editBrand);
@@ -239,6 +275,10 @@ document.addEventListener('click', event => {
   if (button.dataset.deleteBrand) deleteRecord('brands', button.dataset.deleteBrand, 'this brand');
   if (button.dataset.editProduct) openProductModal(state.products.find(product => product.id === Number(button.dataset.editProduct)));
   if (button.dataset.deleteProduct) deleteRecord('products', button.dataset.deleteProduct, 'this product');
+  if (button.dataset.sellerStatus) {
+    const [id, status] = button.dataset.sellerStatus.split(':');
+    setSellerStatus(id, status);
+  }
 });
 
 $('#entityForm').addEventListener('submit', async event => {
@@ -267,5 +307,6 @@ loadCatalog()
   .then(() => Promise.all([
     loadCustomers().catch(error => console.error('Could not load customers:', error)),
     loadOrders().catch(error => console.error('Could not load orders:', error)),
+    loadSellers().catch(error => console.error('Could not load sellers:', error)),
   ]))
   .catch(error => alert(`Could not connect to the catalog database: ${error.message}`));

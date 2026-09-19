@@ -244,9 +244,230 @@ app.get('/api/account/orders', async (request, response) => {
   }
 });
 
+/* ============================================================
+   SELLER ACCOUNTS — a shop applies via the storefront's "Sell with
+   us" link, lands as status='pending', and can't sign in until admin
+   approves them from the Sellers view in /admin. Once active, they
+   get their own scoped dashboard at /seller to manage only their own
+   products - everything else (categories, brands, other sellers'
+   listings, orders) stays admin-only.
+   ============================================================ */
+const sellerSessionCookie = 'audiobullet_seller';
+const sellerSessionLifetime = 14 * 24 * 60 * 60 * 1000; // 14 days
+const sellerSessionSecret = process.env.SELLER_SESSION_SECRET || process.env.SESSION_SECRET || 'audiobullet-dev-seller-session-secret';
+
+function sellerSessionToken(sellerId, expiresAt) {
+  const payload = `${sellerId}:${expiresAt}`;
+  const signature = crypto.createHmac('sha256', sellerSessionSecret).update(payload).digest('hex');
+  return `${Buffer.from(payload).toString('base64url')}.${signature}`;
+}
+
+function currentSellerId(request) {
+  const cookies = getCookies(request);
+  const [encodedPayload, signature] = (cookies[sellerSessionCookie] || '').split('.');
+  if (!encodedPayload || !signature) return null;
+  const payload = Buffer.from(encodedPayload, 'base64url').toString('utf8');
+  const expectedSignature = crypto.createHmac('sha256', sellerSessionSecret).update(payload).digest('hex');
+  if (signature.length !== expectedSignature.length || !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) return null;
+  const [sellerId, expiresAt] = payload.split(':');
+  if (Number(expiresAt) <= Date.now()) return null;
+  return Number(sellerId);
+}
+
+function setSellerSessionCookie(response, sellerId) {
+  const expiresAt = Date.now() + sellerSessionLifetime;
+  response.set('Set-Cookie', `${sellerSessionCookie}=${encodeURIComponent(sellerSessionToken(sellerId, expiresAt))}; HttpOnly; SameSite=Lax; ${process.env.VERCEL ? 'Secure; ' : ''}Path=/; Max-Age=${sellerSessionLifetime / 1000}`);
+}
+
+function requireSellerPage(request, response, next) {
+  if (currentSellerId(request)) return next();
+  return response.redirect('/seller/login.html');
+}
+
+app.post('/api/seller/register', async (request, response) => {
+  const businessName = String(request.body?.businessName || '').trim();
+  const contactName = String(request.body?.contactName || '').trim();
+  const email = String(request.body?.email || '').trim().toLowerCase();
+  const phone = normalizeMpesaPhone(request.body?.phone);
+  const password = String(request.body?.password || '');
+  if (!businessName || !contactName || !email || !password) return response.status(400).json({ error: 'Shop name, contact name, email, and password are required.' });
+  if (!phone) return response.status(400).json({ error: 'Enter a valid Kenyan phone number (e.g. 07XX XXX XXX).' });
+  if (password.length < 6) return response.status(400).json({ error: 'Password must be at least 6 characters.' });
+  try {
+    const result = await queryWithRetry(
+      'INSERT INTO sellers (business_name, contact_name, email, phone, password_hash) VALUES ($1,$2,$3,$4,$5) RETURNING id, business_name, status',
+      [businessName, contactName, email, phone, hashPassword(password)]
+    );
+    response.status(201).json({ status: result.rows[0].status, message: 'Application submitted. We will let you know once it is approved.' });
+  } catch (error) {
+    if (error.code === '23505') return response.status(409).json({ error: 'A seller account with that email already exists.' });
+    console.error('Seller register error:', error);
+    response.status(500).json({ error: 'Could not submit your application.' });
+  }
+});
+
+app.post('/api/seller/login', async (request, response) => {
+  const email = String(request.body?.email || '').trim().toLowerCase();
+  const password = String(request.body?.password || '');
+  if (!email || !password) return response.status(400).json({ error: 'Email and password are required.' });
+  try {
+    const result = await queryWithRetry('SELECT id, business_name, contact_name, email, phone, password_hash, status FROM sellers WHERE email = $1', [email]);
+    const seller = result.rows[0];
+    if (!seller || !verifyPassword(password, seller.password_hash)) return response.status(401).json({ error: 'Invalid email or password.' });
+    if (seller.status === 'pending') return response.status(403).json({ error: 'Your application is still awaiting approval.' });
+    if (seller.status === 'suspended') return response.status(403).json({ error: 'Your seller account has been suspended.' });
+    setSellerSessionCookie(response, seller.id);
+    response.json({ id: seller.id, businessName: seller.business_name, contactName: seller.contact_name, email: seller.email, phone: seller.phone });
+  } catch (error) {
+    console.error('Seller login error:', error);
+    response.status(500).json({ error: 'Could not sign you in.' });
+  }
+});
+
+app.post('/api/seller/logout', (_request, response) => {
+  response.set('Set-Cookie', `${sellerSessionCookie}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
+  response.sendStatus(204);
+});
+
+app.get('/api/seller/me', async (request, response) => {
+  const sellerId = currentSellerId(request);
+  if (!sellerId) return response.status(401).json({ error: 'Not signed in.' });
+  try {
+    const result = await queryWithRetry('SELECT id, business_name, contact_name, email, phone, status FROM sellers WHERE id = $1', [sellerId]);
+    if (!result.rowCount || result.rows[0].status !== 'active') return response.status(401).json({ error: 'Not signed in.' });
+    response.json(result.rows[0]);
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Could not load your account.' });
+  }
+});
+
+app.get('/api/seller/products', async (request, response) => {
+  const sellerId = currentSellerId(request);
+  if (!sellerId) return response.sendStatus(401);
+  try {
+    const result = await queryWithRetry(
+      `SELECT p.id, p.name, p.category_id, c.name AS category, p.brand_id, b.name AS brand, p.price, p.original_price AS "originalPrice", p.stock_quantity AS stock, p.badge, p.specifications AS spec, p.description,
+        p.image_path AS image, p.image_path_2 AS image2, p.image_path_3 AS image3, p.status
+       FROM products p JOIN categories c ON c.id = p.category_id JOIN brands b ON b.id = p.brand_id
+       WHERE p.seller_id = $1 ORDER BY p.id DESC`,
+      [sellerId]
+    );
+    response.json({ products: result.rows });
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Could not load your products.' });
+  }
+});
+
+app.post('/api/seller/products', uploadProductImages, async (request, response) => {
+  const sellerId = currentSellerId(request);
+  if (!sellerId) return response.sendStatus(401);
+  const body = request.body;
+  const values = [body.name, Number(body.categoryId), Number(body.brandId), Number(body.price), body.originalPrice ? Number(body.originalPrice) : null, Number(body.stock || 0), body.badge || null, body.spec || null, body.description || null];
+  if (!body.name || !values[1] || !values[2] || Number.isNaN(values[3])) return response.status(400).json({ error: 'Name, category, brand, and price are required.' });
+  const status = values[5] === 0 ? 'out' : values[5] <= 5 ? 'low' : 'in';
+  try {
+    const files = request.files || {};
+    const [image, image2, image3] = await Promise.all([
+      imageUrl(files.image?.[0]),
+      imageUrl(files.image2?.[0]),
+      imageUrl(files.image3?.[0]),
+    ]);
+    const result = await pool.query(
+      `INSERT INTO products (name, category_id, brand_id, price, original_price, stock_quantity, badge, specifications, description, image_path, image_path_2, image_path_3, status, seller_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
+      [...values, image, image2, image3, status, sellerId]
+    );
+    response.status(201).json(result.rows[0]);
+  } catch (error) {
+    response.status(error.code === '23503' ? 400 : 500).json({ error: error.code === '23503' ? 'Selected category or brand does not exist.' : 'Could not save product.' });
+  }
+});
+
+app.put('/api/seller/products/:id', uploadProductImages, async (request, response) => {
+  const sellerId = currentSellerId(request);
+  if (!sellerId) return response.sendStatus(401);
+  const body = request.body;
+  const stock = Number(body.stock || 0);
+  const values = [body.name, Number(body.categoryId), Number(body.brandId), Number(body.price), body.originalPrice ? Number(body.originalPrice) : null, stock, body.badge || null, body.spec || null, body.description || null];
+  if (!body.name || !values[1] || !values[2] || Number.isNaN(values[3])) return response.status(400).json({ error: 'Name, category, brand, and price are required.' });
+  const status = stock === 0 ? 'out' : stock <= 5 ? 'low' : 'in';
+  try {
+    const files = request.files || {};
+    const imageEntries = await Promise.all([
+      ['image_path', files.image?.[0]],
+      ['image_path_2', files.image2?.[0]],
+      ['image_path_3', files.image3?.[0]],
+    ].map(async ([column, file]) => [column, file ? await imageUrl(file) : undefined]));
+    const imageUpdates = imageEntries.filter(([, url]) => url !== undefined);
+
+    const setClauses = ['name = $1', 'category_id = $2', 'brand_id = $3', 'price = $4', 'original_price = $5', 'stock_quantity = $6', 'badge = $7', 'specifications = $8', 'description = $9'];
+    const queryValues = [...values];
+    imageUpdates.forEach(([column, url]) => {
+      queryValues.push(url);
+      setClauses.push(`${column} = $${queryValues.length}`);
+    });
+    queryValues.push(status);
+    setClauses.push(`status = $${queryValues.length}`);
+    queryValues.push(request.params.id);
+    const idParamIndex = queryValues.length;
+    queryValues.push(sellerId);
+    const sellerParamIndex = queryValues.length;
+
+    const result = await pool.query(`UPDATE products SET ${setClauses.join(', ')}, updated_at = NOW() WHERE id = $${idParamIndex} AND seller_id = $${sellerParamIndex} RETURNING id`, queryValues);
+    if (!result.rowCount) return response.status(404).json({ error: 'Product not found.' });
+    response.json(result.rows[0]);
+  } catch (error) {
+    response.status(error.code === '23503' ? 400 : 500).json({ error: error.code === '23503' ? 'Selected category or brand does not exist.' : 'Could not update product.' });
+  }
+});
+
+app.delete('/api/seller/products/:id', async (request, response) => {
+  const sellerId = currentSellerId(request);
+  if (!sellerId) return response.sendStatus(401);
+  try {
+    const result = await pool.query('DELETE FROM products WHERE id = $1 AND seller_id = $2 RETURNING id', [request.params.id, sellerId]);
+    if (!result.rowCount) return response.status(404).json({ error: 'Product not found.' });
+    response.sendStatus(204);
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Could not delete product.' });
+  }
+});
+
+/* Admin-only: review and manage seller applications/accounts. */
+app.get('/api/sellers', async (_request, response) => {
+  try {
+    const result = await queryWithRetry(
+      `SELECT s.id, s.business_name, s.contact_name, s.email, s.phone, s.status, s.created_at,
+         (SELECT COUNT(*) FROM products p WHERE p.seller_id = s.id) AS product_count
+       FROM sellers s ORDER BY (s.status = 'pending') DESC, s.created_at DESC`
+    );
+    response.json({ sellers: result.rows });
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Could not load sellers.' });
+  }
+});
+
+app.put('/api/sellers/:id/status', async (request, response) => {
+  const status = String(request.body?.status || '');
+  if (!['pending', 'active', 'suspended'].includes(status)) return response.status(400).json({ error: 'Invalid status.' });
+  try {
+    const result = await queryWithRetry('UPDATE sellers SET status = $2, updated_at = NOW() WHERE id = $1 RETURNING id, status', [request.params.id, status]);
+    if (!result.rowCount) return response.status(404).json({ error: 'Seller not found.' });
+    response.json(result.rows[0]);
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Could not update seller status.' });
+  }
+});
+
 app.get('/favicon.ico', (_request, response) => response.sendFile(path.join(__dirname, 'images', 'logo.jpeg')));
 app.use('/admin', requireAdmin);
-app.use('/api', (request, response, next) => (request.path === '/catalog' || request.path === '/catalog/light' || request.path.startsWith('/mpesa/') || request.path.startsWith('/card/') || request.path.startsWith('/account/') || /^\/products\/\d+\/rate$/.test(request.path) || (request.method === 'GET' && /^\/products\/\d+$/.test(request.path))) ? next() : requireAdmin(request, response, next));
+app.get('/seller/login.html', (_request, response) => response.sendFile(path.join(__dirname, 'seller', 'login.html')));
+app.use('/seller', requireSellerPage);
+app.use('/api', (request, response, next) => (request.path === '/catalog' || request.path === '/catalog/light' || request.path.startsWith('/mpesa/') || request.path.startsWith('/card/') || request.path.startsWith('/account/') || request.path.startsWith('/seller/') || /^\/products\/\d+\/rate$/.test(request.path) || (request.method === 'GET' && /^\/products\/\d+$/.test(request.path))) ? next() : requireAdmin(request, response, next));
 app.use('/uploads', express.static(uploadDirectory, { maxAge: '7d' }));
 if (process.env.VERCEL) app.use('/uploads', express.static(path.join(__dirname, 'uploads'), { maxAge: '7d' }));
 app.use('/images', express.static(path.join(__dirname, 'images'), { maxAge: '7d', immutable: true }));
@@ -325,6 +546,18 @@ async function initializeDatabase() {
     ALTER TABLE orders ADD COLUMN IF NOT EXISTS card_last4 VARCHAR(4);
     ALTER TABLE orders ADD COLUMN IF NOT EXISTS card_brand VARCHAR(20);
     ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_id INTEGER REFERENCES customers(id) ON UPDATE CASCADE ON DELETE SET NULL;
+    CREATE TABLE IF NOT EXISTS sellers (
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      business_name VARCHAR(150) NOT NULL,
+      contact_name VARCHAR(150) NOT NULL,
+      email VARCHAR(150) NOT NULL UNIQUE,
+      phone VARCHAR(20) NOT NULL,
+      password_hash TEXT NOT NULL,
+      status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'active', 'suspended')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    ALTER TABLE products ADD COLUMN IF NOT EXISTS seller_id INTEGER REFERENCES sellers(id) ON UPDATE CASCADE ON DELETE SET NULL;
   `);
 }
 
@@ -376,7 +609,8 @@ app.get('/api/catalog', async (_request, response) => {
         CASE WHEN p.image_path_3 LIKE '%/undefined' THEN NULL ELSE p.image_path_3 END AS image3,
         p.rating_count AS reviews,
         CASE WHEN p.rating_count > 0 THEN ROUND(p.rating_sum::numeric / p.rating_count, 1) ELSE 0 END AS rating,
-        p.status FROM products p JOIN categories c ON c.id = p.category_id JOIN brands b ON b.id = p.brand_id ORDER BY p.id DESC`),
+        p.status, p.seller_id, s.business_name AS seller_name
+        FROM products p JOIN categories c ON c.id = p.category_id JOIN brands b ON b.id = p.brand_id LEFT JOIN sellers s ON s.id = p.seller_id ORDER BY p.id DESC`),
     ]);
     response.json({ categories: categories.rows, brands: brands.rows, products: products.rows });
   } catch (error) {
@@ -442,7 +676,8 @@ app.get('/api/catalog/light', async (_request, response) => {
         CASE WHEN p.image_path LIKE '%/undefined' THEN NULL ELSE p.image_path END AS image,
         p.rating_count AS reviews,
         CASE WHEN p.rating_count > 0 THEN ROUND(p.rating_sum::numeric / p.rating_count, 1) ELSE 0 END AS rating,
-        p.status FROM products p JOIN categories c ON c.id = p.category_id JOIN brands b ON b.id = p.brand_id ORDER BY p.id DESC`),
+        p.status FROM products p JOIN categories c ON c.id = p.category_id JOIN brands b ON b.id = p.brand_id
+        LEFT JOIN sellers s ON s.id = p.seller_id WHERE p.seller_id IS NULL OR s.status = 'active' ORDER BY p.id DESC`),
     ]);
     products.rows.forEach(product => { product.image = thumbnailUrl(product.image); });
     response.json({ categories: categories.rows, brands: brands.rows, products: products.rows });
@@ -462,7 +697,8 @@ app.get('/api/products/:id', async (request, response) => {
       CASE WHEN p.image_path_3 LIKE '%/undefined' THEN NULL ELSE p.image_path_3 END AS image3,
       p.rating_count AS reviews,
       CASE WHEN p.rating_count > 0 THEN ROUND(p.rating_sum::numeric / p.rating_count, 1) ELSE 0 END AS rating,
-      p.status FROM products p JOIN categories c ON c.id = p.category_id JOIN brands b ON b.id = p.brand_id WHERE p.id = $1`, [request.params.id]);
+      p.status FROM products p JOIN categories c ON c.id = p.category_id JOIN brands b ON b.id = p.brand_id
+      LEFT JOIN sellers s ON s.id = p.seller_id WHERE p.id = $1 AND (p.seller_id IS NULL OR s.status = 'active')`, [request.params.id]);
     if (!result.rowCount) return response.status(404).json({ error: 'Product not found.' });
     response.json(result.rows[0]);
   } catch (error) {
