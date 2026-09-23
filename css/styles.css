@@ -317,6 +317,7 @@ footer{background:#e8f0ed;padding-top:52px;border-top:1px solid var(--border);}
   .mobile-filter-btn{display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border);padding:9px 14px;border-radius:8px;font-size:13px;margin-bottom:16px;}
 }
 @media (max-width: 600px){
+  .logo>div{display:none;}
   .product-grid{grid-template-columns:1fr;}
   .trust-grid{grid-template-columns:1fr;}
   .stat-row{flex-wrap:wrap;}

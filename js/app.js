@@ -434,7 +434,9 @@ function addToCart(id){
   updateCartUI();
   bumpCartBadge();
   renderProducts();
-  openCart();
+  // On phones, adding an item shouldn't yank the shopper into the cart drawer -
+  // let the badge bump be the feedback, they open it themselves when ready.
+  if(!window.matchMedia('(max-width: 600px)').matches) openCart();
 }
 function changeQty(id, delta){
   if(!cart[id]) return;
