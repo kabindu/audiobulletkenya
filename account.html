@@ -49,7 +49,9 @@
         <label class="field"><span>Full name</span><input type="text" name="name" required minlength="2" autocomplete="name"></label>
         <label class="field"><span>Email</span><input type="email" name="email" required autocomplete="email"></label>
         <label class="field"><span>Phone number</span><input type="tel" name="phone" required inputmode="tel" autocomplete="tel" pattern="(0|\+?254)[17][0-9]{8}" title="Enter a valid Kenyan phone number, e.g. 07XX XXX XXX" placeholder="07XX XXX XXX"></label>
-        <label class="field"><span>Password</span><input type="password" name="password" required minlength="6" autocomplete="new-password"></label>
+        <label class="field"><span>Password</span><input type="password" name="password" id="registerPassword" required minlength="6" autocomplete="new-password"></label>
+        <div class="pw-strength" id="registerPwStrength" hidden><div class="pw-strength-bars"><span></span><span></span><span></span><span></span></div><span class="pw-strength-label"></span></div>
+        <label class="field"><span>Confirm password</span><input type="password" name="confirmPassword" id="registerConfirmPassword" required autocomplete="new-password"></label>
         <p class="acct-error" id="registerError"></p>
         <button class="add-btn acct-submit" type="submit">Create account</button>
       </form>
