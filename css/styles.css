@@ -598,14 +598,14 @@ footer{background:#fff3d6;border-top:1px solid var(--border);padding-top:34px;}.
    Being last here means this always wins instead. */
 @media (max-width: 980px){
   .header-row{display:grid;grid-template-columns:auto 1fr auto;grid-template-areas:"logo actions cart" "search search search";align-items:center;column-gap:6px;row-gap:10px;height:auto;padding:14px 0;}
-  .logo{grid-area:logo;min-width:0;gap:4px;padding:2px 4px;}
-  .logo-mark{width:24px;height:24px;}
-  .logo-text{font-size:12px;}
-  .logo-tag{font-size:6.5px;letter-spacing:.06em;}
-  .header-actions{grid-area:actions;justify-self:end;min-width:0;gap:1px;margin-left:0;}
-  .header-action{padding:5px;gap:0;font-size:9px;}
-  .header-action svg{width:15px;height:15px;}
-  .cart-btn{grid-area:cart;padding:5px;}
-  .cart-btn .cart-label{font-size:9px;}
+  .logo{grid-area:logo;min-width:0;gap:5px;padding:2px 4px;}
+  .logo-mark{width:28px;height:28px;}
+  .logo-text{font-size:14px;}
+  .logo-tag{font-size:7.5px;letter-spacing:.06em;}
+  .header-actions{grid-area:actions;justify-self:end;min-width:0;gap:2px;margin-left:0;}
+  .header-action{padding:6px;gap:1px;font-size:10.5px;}
+  .header-action svg{width:18px;height:18px;}
+  .cart-btn{grid-area:cart;padding:6px;}
+  .cart-btn .cart-label{font-size:10.5px;}
   .search-wrap{grid-area:search;width:100%;max-width:100%;}
 }
