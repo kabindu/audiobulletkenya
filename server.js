@@ -383,6 +383,7 @@ app.post('/api/seller/products', uploadProductImages, async (request, response) 
       `INSERT INTO products (name, category_id, brand_id, price, original_price, stock_quantity, badge, specifications, description, image_path, image_path_2, image_path_3, status, seller_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
       [...values, image, image2, image3, status, sellerId]
     );
+    invalidateCatalogCache();
     response.status(201).json(result.rows[0]);
   } catch (error) {
     response.status(error.code === '23503' ? 400 : 500).json({ error: error.code === '23503' ? 'Selected category or brand does not exist.' : 'Could not save product.' });
@@ -421,6 +422,7 @@ app.put('/api/seller/products/:id', uploadProductImages, async (request, respons
 
     const result = await pool.query(`UPDATE products SET ${setClauses.join(', ')}, updated_at = NOW() WHERE id = $${idParamIndex} AND seller_id = $${sellerParamIndex} RETURNING id`, queryValues);
     if (!result.rowCount) return response.status(404).json({ error: 'Product not found.' });
+    invalidateCatalogCache();
     response.json(result.rows[0]);
   } catch (error) {
     response.status(error.code === '23503' ? 400 : 500).json({ error: error.code === '23503' ? 'Selected category or brand does not exist.' : 'Could not update product.' });
@@ -433,6 +435,7 @@ app.delete('/api/seller/products/:id', async (request, response) => {
   try {
     const result = await pool.query('DELETE FROM products WHERE id = $1 AND seller_id = $2 RETURNING id', [request.params.id, sellerId]);
     if (!result.rowCount) return response.status(404).json({ error: 'Product not found.' });
+    invalidateCatalogCache();
     response.sendStatus(204);
   } catch (error) {
     console.error(error);
@@ -461,6 +464,7 @@ app.put('/api/sellers/:id/status', async (request, response) => {
   try {
     const result = await queryWithRetry('UPDATE sellers SET status = $2, updated_at = NOW() WHERE id = $1 RETURNING id, status', [request.params.id, status]);
     if (!result.rowCount) return response.status(404).json({ error: 'Seller not found.' });
+    invalidateCatalogCache();
     response.json(result.rows[0]);
   } catch (error) {
     console.error(error);
@@ -570,6 +574,19 @@ async function initializeDatabase() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     ALTER TABLE products ADD COLUMN IF NOT EXISTS seller_id INTEGER REFERENCES sellers(id) ON UPDATE CASCADE ON DELETE SET NULL;
+
+    -- Postgres does not auto-index foreign key columns (only primary keys and
+    -- UNIQUE constraints get one for free) - these are every join/filter column
+    -- hit on the hot paths: storefront catalog, seller dashboards, order history.
+    -- Without them, each of those queries is a sequential scan that gets slower
+    -- as products/orders grow and gets worse under concurrent traffic.
+    CREATE INDEX IF NOT EXISTS idx_products_seller_id ON products(seller_id);
+    CREATE INDEX IF NOT EXISTS idx_products_category_id ON products(category_id);
+    CREATE INDEX IF NOT EXISTS idx_products_brand_id ON products(brand_id);
+    CREATE INDEX IF NOT EXISTS idx_brands_category_id ON brands(category_id);
+    CREATE INDEX IF NOT EXISTS idx_sellers_status ON sellers(status);
+    CREATE INDEX IF NOT EXISTS idx_orders_customer_id ON orders(customer_id);
+    CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(created_at DESC);
   `);
 }
 
@@ -596,6 +613,23 @@ app.use('/api', async (_request, _response, next) => {
     next(error);
   }
 });
+
+/* Short in-memory cache for the two read-heavy public endpoints that every
+   storefront visitor and every seller-dashboard boot hits: the light catalog
+   and the taxonomy dropdown data. A burst of concurrent visitors previously
+   meant a burst of concurrent identical DB queries; now only the first one
+   past the TTL pays for a DB round trip and everyone else in that window
+   gets served from memory. Invalidated immediately on any write that could
+   change the response (product/category/brand/seller-status changes) so
+   edits still show up right away - the TTL is just a ceiling on staleness
+   for the read traffic in between. */
+const catalogCache = { light: null, lightAt: 0, taxonomy: null, taxonomyAt: 0 };
+const CATALOG_CACHE_TTL_MS = 20000;
+
+function invalidateCatalogCache() {
+  catalogCache.light = null;
+  catalogCache.taxonomy = null;
+}
 
 async function queryWithRetry(text, values = [], attempts = 2) {
   let lastError;
@@ -679,12 +713,18 @@ app.get('/api/orders', async (_request, response) => {
    dropdowns, which don't need the full product catalog (images and
    all) that /api/catalog/light carries just to populate two selects. */
 app.get('/api/taxonomy', async (_request, response) => {
+  if (catalogCache.taxonomy && Date.now() - catalogCache.taxonomyAt < CATALOG_CACHE_TTL_MS) {
+    return response.json(catalogCache.taxonomy);
+  }
   try {
     const [categories, brands] = await Promise.all([
       queryWithRetry('SELECT id, name FROM categories ORDER BY name'),
       queryWithRetry(`SELECT b.id, b.name, b.category_id, c.name AS category_name FROM brands b JOIN categories c ON c.id = b.category_id ORDER BY b.name`),
     ]);
-    response.json({ categories: categories.rows, brands: brands.rows });
+    const payload = { categories: categories.rows, brands: brands.rows };
+    catalogCache.taxonomy = payload;
+    catalogCache.taxonomyAt = Date.now();
+    response.json(payload);
   } catch (error) {
     console.error(error);
     response.status(500).json({ error: 'Could not load categories and brands.' });
@@ -696,6 +736,9 @@ app.get('/api/taxonomy', async (_request, response) => {
    product page, so the grid isn't downloading every product's full photo set
    just to render a thumbnail. */
 app.get('/api/catalog/light', async (_request, response) => {
+  if (catalogCache.light && Date.now() - catalogCache.lightAt < CATALOG_CACHE_TTL_MS) {
+    return response.json(catalogCache.light);
+  }
   try {
     const [categories, brands, products] = await Promise.all([
       queryWithRetry('SELECT id, name FROM categories ORDER BY name'),
@@ -708,7 +751,10 @@ app.get('/api/catalog/light', async (_request, response) => {
         LEFT JOIN sellers s ON s.id = p.seller_id WHERE p.seller_id IS NULL OR s.status = 'active' ORDER BY p.id DESC`),
     ]);
     products.rows.forEach(product => { product.image = thumbnailUrl(product.image); });
-    response.json({ categories: categories.rows, brands: brands.rows, products: products.rows });
+    const payload = { categories: categories.rows, brands: brands.rows, products: products.rows };
+    catalogCache.light = payload;
+    catalogCache.lightAt = Date.now();
+    response.json(payload);
   } catch (error) {
     console.error(error);
     response.status(500).json({ error: 'Could not load catalog data.' });
@@ -800,16 +846,18 @@ async function priceAndCheckStock(items) {
    never at order-creation time, so a cancelled or failed payment never
    reduces stock. */
 async function decrementStock(orderItems) {
-  for (const item of orderItems || []) {
-    await queryWithRetry(
-      `UPDATE products SET
-         stock_quantity = GREATEST(stock_quantity - $2, 0),
-         status = CASE WHEN stock_quantity - $2 <= 0 THEN 'out' WHEN stock_quantity - $2 <= 5 THEN 'low' ELSE 'in' END,
-         updated_at = NOW()
-       WHERE id = $1`,
-      [item.productId, item.qty]
-    );
-  }
+  // Each update targets a different product row, so there's no contention
+  // between them - running them concurrently instead of one-at-a-time cuts
+  // an N-round-trip serial chain down to a single round trip, which matters
+  // most on multi-item orders during a burst of concurrent checkouts.
+  await Promise.all((orderItems || []).map(item => queryWithRetry(
+    `UPDATE products SET
+       stock_quantity = GREATEST(stock_quantity - $2, 0),
+       status = CASE WHEN stock_quantity - $2 <= 0 THEN 'out' WHEN stock_quantity - $2 <= 5 THEN 'low' ELSE 'in' END,
+       updated_at = NOW()
+     WHERE id = $1`,
+    [item.productId, item.qty]
+  )));
 }
 
 async function getMpesaAccessToken() {
@@ -933,6 +981,7 @@ app.post('/api/categories', async (request, response) => {
   if (!name) return response.status(400).json({ error: 'Category name is required.' });
   try {
     const result = await pool.query('INSERT INTO categories (name) VALUES ($1) RETURNING id, name', [name]);
+    invalidateCatalogCache();
     response.status(201).json(result.rows[0]);
   } catch (error) {
     response.status(error.code === '23505' ? 409 : 500).json({ error: error.code === '23505' ? 'Category already exists.' : 'Could not save category.' });
@@ -945,6 +994,7 @@ app.put('/api/categories/:id', async (request, response) => {
   try {
     const result = await pool.query('UPDATE categories SET name = $1, updated_at = NOW() WHERE id = $2 RETURNING id, name', [name, request.params.id]);
     if (!result.rowCount) return response.status(404).json({ error: 'Category not found.' });
+    invalidateCatalogCache();
     response.json(result.rows[0]);
   } catch (error) {
     response.status(error.code === '23505' ? 409 : 500).json({ error: error.code === '23505' ? 'Category already exists.' : 'Could not update category.' });
@@ -955,6 +1005,7 @@ app.delete('/api/categories/:id', async (request, response) => {
   try {
     const result = await pool.query('DELETE FROM categories WHERE id = $1 RETURNING id', [request.params.id]);
     if (!result.rowCount) return response.status(404).json({ error: 'Category not found.' });
+    invalidateCatalogCache();
     response.sendStatus(204);
   } catch (error) {
     response.status(error.code === '23503' ? 409 : 500).json({ error: error.code === '23503' ? 'This category is used by a brand or product.' : 'Could not delete category.' });
@@ -967,6 +1018,7 @@ app.post('/api/brands', async (request, response) => {
   if (!name || !categoryId) return response.status(400).json({ error: 'Brand name and category are required.' });
   try {
     const result = await pool.query('INSERT INTO brands (name, category_id) VALUES ($1, $2) RETURNING id, name, category_id', [name, categoryId]);
+    invalidateCatalogCache();
     response.status(201).json(result.rows[0]);
   } catch (error) {
     response.status(error.code === '23505' ? 409 : error.code === '23503' ? 400 : 500).json({ error: error.code === '23505' ? 'Brand already exists.' : error.code === '23503' ? 'Selected category does not exist.' : 'Could not save brand.' });
@@ -980,6 +1032,7 @@ app.put('/api/brands/:id', async (request, response) => {
   try {
     const result = await pool.query('UPDATE brands SET name = $1, category_id = $2, updated_at = NOW() WHERE id = $3 RETURNING id, name, category_id', [name, categoryId, request.params.id]);
     if (!result.rowCount) return response.status(404).json({ error: 'Brand not found.' });
+    invalidateCatalogCache();
     response.json(result.rows[0]);
   } catch (error) {
     response.status(error.code === '23505' ? 409 : error.code === '23503' ? 400 : 500).json({ error: error.code === '23505' ? 'Brand already exists.' : error.code === '23503' ? 'Selected category does not exist.' : 'Could not update brand.' });
@@ -990,6 +1043,7 @@ app.delete('/api/brands/:id', async (request, response) => {
   try {
     const result = await pool.query('DELETE FROM brands WHERE id = $1 RETURNING id', [request.params.id]);
     if (!result.rowCount) return response.status(404).json({ error: 'Brand not found.' });
+    invalidateCatalogCache();
     response.sendStatus(204);
   } catch (error) {
     response.status(error.code === '23503' ? 409 : 500).json({ error: error.code === '23503' ? 'This brand is used by a product.' : 'Could not delete brand.' });
@@ -1031,6 +1085,7 @@ app.post('/api/products', uploadProductImages, async (request, response) => {
       imageUrl(files.image3?.[0]),
     ]);
     const result = await pool.query(`INSERT INTO products (name, category_id, brand_id, price, original_price, stock_quantity, badge, specifications, description, image_path, image_path_2, image_path_3, status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`, [...values, image, image2, image3, status]);
+    invalidateCatalogCache();
     response.status(201).json(result.rows[0]);
   } catch (error) {
     response.status(error.code === '23503' ? 400 : 500).json({ error: error.code === '23503' ? 'Selected category or brand does not exist.' : 'Could not save product.' });
@@ -1064,6 +1119,7 @@ app.put('/api/products/:id', uploadProductImages, async (request, response) => {
 
     const result = await pool.query(`UPDATE products SET ${setClauses.join(', ')}, updated_at = NOW() WHERE id = $${queryValues.length} RETURNING id`, queryValues);
     if (!result.rowCount) return response.status(404).json({ error: 'Product not found.' });
+    invalidateCatalogCache();
     response.json(result.rows[0]);
   } catch (error) {
     response.status(error.code === '23503' ? 400 : 500).json({ error: error.code === '23503' ? 'Selected category or brand does not exist.' : 'Could not update product.' });
@@ -1074,6 +1130,7 @@ app.delete('/api/products/:id', async (request, response) => {
   try {
     const result = await pool.query('DELETE FROM products WHERE id = $1 RETURNING id', [request.params.id]);
     if (!result.rowCount) return response.status(404).json({ error: 'Product not found.' });
+    invalidateCatalogCache();
     response.sendStatus(204);
   } catch (error) {
     console.error(error);
