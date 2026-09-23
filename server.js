@@ -153,6 +153,8 @@ app.post('/api/account/register', async (request, response) => {
   const phone = normalizeMpesaPhone(request.body?.phone);
   const password = String(request.body?.password || '');
   if (!name || !email || !password) return response.status(400).json({ error: 'Name, email, and password are required.' });
+  if (name.length < 2) return response.status(400).json({ error: 'Enter your full name.' });
+  if (!isValidEmail(email)) return response.status(400).json({ error: 'Enter a valid email address.' });
   if (!phone) return response.status(400).json({ error: 'Enter a valid Kenyan phone number (e.g. 07XX XXX XXX).' });
   if (password.length < 6) return response.status(400).json({ error: 'Password must be at least 6 characters.' });
   try {
@@ -292,6 +294,8 @@ app.post('/api/seller/register', async (request, response) => {
   const phone = normalizeMpesaPhone(request.body?.phone);
   const password = String(request.body?.password || '');
   if (!businessName || !contactName || !email || !password) return response.status(400).json({ error: 'Shop name, contact name, email, and password are required.' });
+  if (businessName.length < 2 || contactName.length < 2) return response.status(400).json({ error: 'Enter a valid shop name and contact name.' });
+  if (!isValidEmail(email)) return response.status(400).json({ error: 'Enter a valid email address.' });
   if (!phone) return response.status(400).json({ error: 'Enter a valid Kenyan phone number (e.g. 07XX XXX XXX).' });
   if (password.length < 6) return response.status(400).json({ error: 'Password must be at least 6 characters.' });
   try {
@@ -468,7 +472,7 @@ app.get('/favicon.ico', (_request, response) => response.sendFile(path.join(__di
 app.use('/admin', requireAdmin);
 app.get('/seller/login.html', (_request, response) => response.sendFile(path.join(__dirname, 'seller', 'login.html')));
 app.use('/seller', requireSellerPage);
-app.use('/api', (request, response, next) => (request.path === '/catalog' || request.path === '/catalog/light' || request.path === '/taxonomy' || request.path.startsWith('/mpesa/') || request.path.startsWith('/card/') || request.path.startsWith('/account/') || request.path.startsWith('/seller/') || /^\/products\/\d+\/rate$/.test(request.path) || (request.method === 'GET' && /^\/products\/\d+$/.test(request.path))) ? next() : requireAdmin(request, response, next));
+app.use('/api', (request, response, next) => (request.path === '/catalog' || request.path === '/catalog/light' || request.path === '/taxonomy' || request.path.startsWith('/mpesa/') || request.path.startsWith('/account/') || request.path.startsWith('/seller/') || /^\/products\/\d+\/rate$/.test(request.path) || (request.method === 'GET' && /^\/products\/\d+$/.test(request.path))) ? next() : requireAdmin(request, response, next));
 app.use('/uploads', express.static(uploadDirectory, { maxAge: '7d' }));
 if (process.env.VERCEL) app.use('/uploads', express.static(path.join(__dirname, 'uploads'), { maxAge: '7d' }));
 app.use('/images', express.static(path.join(__dirname, 'images'), { maxAge: '7d', immutable: true }));
@@ -761,6 +765,13 @@ function normalizeMpesaPhone(raw) {
   return null;
 }
 
+/* Client-side type="email"/pattern attributes only guard the form - anyone
+   calling the API directly bypasses them, so every account-creating route
+   re-checks format here too. */
+function isValidEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || ''));
+}
+
 /* Re-checks price AND current stock against the database at checkout time -
    a customer's local cart can go stale (another buyer took the last unit,
    admin marked something out of stock) since nothing re-validates it
@@ -909,77 +920,6 @@ app.get('/api/mpesa/status/:checkoutRequestId', async (request, response) => {
   } catch (error) {
     console.error(error);
     response.status(500).json({ error: 'Could not check payment status.' });
-  }
-});
-
-/* ============================================================
-   CARD CHECKOUT (demo/simulated — no gateway configured)
-   Raw card numbers and CVVs are never persisted; only the last 4
-   digits and detected brand are stored for the order record.
-   ============================================================ */
-function luhnCheck(digits) {
-  let sum = 0;
-  let alternate = false;
-  for (let i = digits.length - 1; i >= 0; i -= 1) {
-    let digit = Number(digits[i]);
-    if (alternate) {
-      digit *= 2;
-      if (digit > 9) digit -= 9;
-    }
-    sum += digit;
-    alternate = !alternate;
-  }
-  return sum % 10 === 0;
-}
-
-function detectCardBrand(digits) {
-  if (/^4/.test(digits)) return 'Visa';
-  if (/^(5[1-5]|2[2-7])/.test(digits)) return 'Mastercard';
-  if (/^3[47]/.test(digits)) return 'Amex';
-  if (/^6(?:011|5)/.test(digits)) return 'Discover';
-  return 'Card';
-}
-
-app.post('/api/card/charge', async (request, response) => {
-  const body = request.body || {};
-  const customer = body.customer || {};
-  const card = body.card || {};
-  const items = Array.isArray(body.items) ? body.items : [];
-  const name = String(customer.name || '').trim();
-  const address = String(customer.address || '').trim();
-  const phone = String(customer.phone || '').trim();
-  const email = customer.email ? String(customer.email).trim() : null;
-  if (!name || !address || !phone) return response.status(400).json({ error: 'Name, phone, and delivery address are required.' });
-  if (!items.length) return response.status(400).json({ error: 'Your cart is empty.' });
-
-  const cardNumber = String(card.number || '').replace(/\s+/g, '');
-  const cardName = String(card.name || '').trim();
-  const expiry = String(card.expiry || '').trim();
-  const cvv = String(card.cvv || '').trim();
-  const expiryMatch = /^(\d{2})\/(\d{2})$/.exec(expiry);
-  if (!/^\d{12,19}$/.test(cardNumber) || !luhnCheck(cardNumber)) return response.status(400).json({ error: 'Enter a valid card number.' });
-  if (!cardName) return response.status(400).json({ error: 'Enter the name on the card.' });
-  if (!expiryMatch) return response.status(400).json({ error: 'Enter the expiry as MM/YY.' });
-  if (!/^\d{3,4}$/.test(cvv)) return response.status(400).json({ error: 'Enter a valid CVV.' });
-  const expiryDate = new Date(2000 + Number(expiryMatch[2]), Number(expiryMatch[1]));
-  if (Number(expiryMatch[1]) < 1 || Number(expiryMatch[1]) > 12 || expiryDate < new Date()) return response.status(400).json({ error: 'This card has expired.' });
-
-  try {
-    const { orderItems, subtotal } = await priceAndCheckStock(items);
-    const amount = Math.round(subtotal);
-    if (amount < 1) return response.status(400).json({ error: 'Order total must be at least KSh 1.' });
-
-    const orderResult = await queryWithRetry(
-      `INSERT INTO orders (customer_id, customer_name, customer_phone, customer_email, delivery_address, items, subtotal, status, payment_method, card_last4, card_brand)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,'paid','card',$8,$9) RETURNING id`,
-      [currentCustomerId(request), name, phone, email, address, JSON.stringify(orderItems), amount, cardNumber.slice(-4), detectCardBrand(cardNumber)]
-    );
-    await decrementStock(orderItems);
-    await saveCustomerCart(currentCustomerId(request), []);
-    response.json({ orderId: orderResult.rows[0].id, status: 'paid' });
-  } catch (error) {
-    console.error('Card charge error:', error);
-    response.status(500).json({ error: error.message || 'Could not process the card payment.' });
   }
 });
 
