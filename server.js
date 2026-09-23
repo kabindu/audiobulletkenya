@@ -472,7 +472,14 @@ app.use('/api', (request, response, next) => (request.path === '/catalog' || req
 app.use('/uploads', express.static(uploadDirectory, { maxAge: '7d' }));
 if (process.env.VERCEL) app.use('/uploads', express.static(path.join(__dirname, 'uploads'), { maxAge: '7d' }));
 app.use('/images', express.static(path.join(__dirname, 'images'), { maxAge: '7d', immutable: true }));
-app.use(express.static(__dirname));
+app.use(express.static(__dirname, {
+  setHeaders: (response, filePath) => {
+    // Force JS/CSS to always revalidate instead of possibly being served
+    // straight from a stale browser cache after a deploy - a fast 304 round
+    // trip beats shipping a fix that silently doesn't show up for visitors.
+    if (filePath.endsWith('.js') || filePath.endsWith('.css')) response.set('Cache-Control', 'no-cache');
+  },
+}));
 
 async function initializeDatabase() {
   await pool.query(`
